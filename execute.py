@@ -44,11 +44,7 @@ def evaluate_model(data, dataset_type='ihdp', tune=None):
 
     dim_l = hparams["dim_layer"]
     fix = {
-        "dim_fe_1": dim_l,
-        "dim_fe_2": dim_l,       
-        "dim_ce_1": dim_l, 
-        "dim_apt_1": dim_l if dataset_type == 'ihdp' else dim_l // 2,
-        "dim_apt_2": dim_l if dataset_type == 'ihdp' else dim_l // 2, 
+        "num_layers": 2,
         "temp_start": 10.0,
         "gamma": 0.97,
     }
@@ -144,19 +140,18 @@ Out-Sample mise: {mise_te:.4f}, adrfe: {adrfe_te:.4f} , \n\
 FDR1: {fdr_te[0]:.4f}, FDR2: {fdr_te[1]:.4f} FDR3: {fdr_te[2]:.4f}, \n\
 TPR1: {tpr_te[0]:.4f}, TPR2: {tpr_te[1]:.4f} TPR3: {tpr_te[2]:.4f}")
         
-    avg_mise_tr = np.mean(mise_tr_list)
-    avg_mise_te = np.mean(mise_te_list)
+    avg_mise_tr, std_mise_tr = np.mean(mise_tr_list), np.std(mise_tr_list)
+    avg_adrfe_tr, std_adrfe_tr = np.mean(adrfe_tr_list), np.std(adrfe_tr_list)
+    avg_mise_te, std_mise_te = np.mean(mise_te_list), np.std(mise_te_list)
+    avg_adrfe_te, std_adrfe_te = np.mean(adrfe_te_list), np.std(adrfe_te_list)
 
-    avg_adrfe_tr = np.mean(adrfe_tr_list)
-    avg_adrfe_te = np.mean(adrfe_te_list)
+    avg_fdr1_te, std_fdr1_te = np.mean(fdr1_te_list), np.std(fdr1_te_list)
+    avg_fdr2_te, std_fdr2_te = np.mean(fdr2_te_list), np.std(fdr2_te_list)
+    avg_fdr3_te, std_fdr3_te = np.mean(fdr3_te_list), np.std(fdr3_te_list)
 
-    avg_fdr1_te = np.mean(fdr1_te_list)
-    avg_fdr2_te = np.mean(fdr2_te_list)
-    avg_fdr3_te = np.mean(fdr3_te_list)
-
-    avg_tpr1_te = np.mean(tpr1_te_list)
-    avg_tpr2_te = np.mean(tpr2_te_list)
-    avg_tpr3_te = np.mean(tpr3_te_list)
+    avg_tpr1_te, std_tpr1_te = np.mean(tpr1_te_list), np.std(tpr1_te_list)
+    avg_tpr2_te, std_tpr2_te = np.mean(tpr2_te_list), np.std(tpr2_te_list)
+    avg_tpr3_te, std_tpr3_te = np.mean(tpr3_te_list), np.std(tpr3_te_list)
 
     avg_c_u_te = np.mean(c_u_te_list)
     avg_c_v_te = np.mean(c_v_te_list)
@@ -166,12 +161,14 @@ TPR1: {tpr_te[0]:.4f}, TPR2: {tpr_te[1]:.4f} TPR3: {tpr_te[2]:.4f}")
     avg_pred_te, avg_fact_te, t_axis_te = np.mean(drf_te_list, axis=0)
 
     print("Average In-Sample over all datasets and iterations\n\
-mise: {:.4f} adrfe: {:.4f}".format(avg_mise_tr, avg_adrfe_tr))
+mise: {:.4f} ± {:.4f} adrfe: {:.4f} ± {:.4f}".format(avg_mise_tr, std_mise_tr, avg_adrfe_tr, std_adrfe_tr))
     print("Average Out-Sample over all datasets and iterations\n\
-mise: {:.4f} adrfe: {:.4f}".format(avg_mise_te, avg_adrfe_te))
+mise: {:.4f} ± {:.4f} adrfe: {:.4f} ± {:.4f}".format(avg_mise_te, std_mise_te, avg_adrfe_te, std_adrfe_te))
     print("Average FDR and TPR over all datasets and iterations\n\
-FDR1: {:.4f}, FDR2: {:.4f} FDR3: {:.4f}, \n\
-TPR1: {:.4f}, TPR2: {:.4f} TPR3: {:.4f}".format(avg_fdr1_te, avg_fdr2_te, avg_fdr3_te, avg_tpr1_te, avg_tpr2_te, avg_tpr3_te))
+FDR1: {:.4f} ± {:.4f}, FDR2: {:.4f} ± {:.4f} FDR3: {:.4f} ± {:.4f}, \n\
+TPR1: {:.4f} ± {:.4f}, TPR2: {:.4f} ± {:.4f} TPR3: {:.4f} ± {:.4f}".format(
+        avg_fdr1_te, std_fdr1_te, avg_fdr2_te, std_fdr2_te, avg_fdr3_te, std_fdr3_te, 
+        avg_tpr1_te, std_tpr1_te, avg_tpr2_te, std_tpr2_te, avg_tpr3_te, std_tpr3_te))
     
     utils.plot_curve(data['x'].shape[1], c_u_te_list, c_v_te_list, str(np.sum(c_u_te_list)), str(np.sum(c_v_te_list)), "Each")
     utils.plot_curve(data['x'].shape[1], c_uv_te_list, np.zeros_like(c_uv_te_list), str(np.sum(c_uv_te_list)), "0", "Union")

@@ -51,32 +51,44 @@ class GRLayer(nn.Module):
     def forward(self, x):
         return utils.GradientReversalFunction.apply(x, self.lambda_)  
     
+class ResidualBlock(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.LayerNorm(dim),
+            nn.SiLU(),
+            nn.Linear(dim, dim),
+            nn.Dropout(0.2)
+        )
+        
+    def forward(self, x):
+        return x + self.block(x)
+
 class POLayer(BaseModule):
     def __init__(self, info, hparams):
         super().__init__(info, hparams)
 
         self.dim_a_expanded = 1 + 2 * self.L_pe  # [a, sin(2^0*pi*a), cos(2^0*pi*a), ..., sin(2^(L_pe-1)*pi*a), cos(2^(L_pe-1)*pi*a)]
 
-        self.fe = torch.nn.Sequential(
-            torch.nn.Linear(self.dim_x, self.dim_fe_1),
-            torch.nn.SiLU(),
-            torch.nn.Dropout(0.2),
-            torch.nn.Linear(self.dim_fe_1, self.dim_fe_2))
+        fe_layers = [torch.nn.Linear(self.dim_x, self.dim_layer)]
+        for _ in range(getattr(self, 'num_layers', 2)):
+            fe_layers.append(ResidualBlock(self.dim_layer))
+        self.fe = torch.nn.Sequential(*fe_layers)
         
         self.ce_gamma = torch.nn.Sequential(
-            torch.nn.Linear(self.dim_a_expanded, self.dim_ce_1),
+            torch.nn.Linear(self.dim_a_expanded, self.dim_layer),
             torch.nn.SiLU(),
-            torch.nn.Linear(self.dim_ce_1, self.dim_fe_2))   
+            torch.nn.Linear(self.dim_layer, self.dim_layer))   
         
         self.ce_beta = torch.nn.Sequential(
-            torch.nn.Linear(self.dim_a_expanded, self.dim_ce_1),
+            torch.nn.Linear(self.dim_a_expanded, self.dim_layer),
             torch.nn.SiLU(),
-            torch.nn.Linear(self.dim_ce_1, self.dim_fe_2)) 
+            torch.nn.Linear(self.dim_layer, self.dim_layer)) 
 
         self.pr = torch.nn.Sequential(
-            torch.nn.Linear(self.dim_fe_2, self.dim_fe_2),
+            torch.nn.LayerNorm(self.dim_layer),
             torch.nn.SiLU(),
-            torch.nn.Linear(self.dim_fe_2, self.dim_y))
+            torch.nn.Linear(self.dim_layer, self.dim_y))
         
     def expand_a(self, a):
         # NeRF-style positional encoding: [a, sin(2^k * pi * a), cos(2^k * pi * a)] for k=0,...,L_pe-1
@@ -88,7 +100,7 @@ class POLayer(BaseModule):
     
     def forward(self, uv, a):
         a_expanded = self.expand_a(a)
-        y_star_hat = self.pr(self.fe(uv) * self.ce_gamma(a_expanded) + self.ce_beta(a_expanded))
+        y_star_hat = self.pr(self.fe(uv) * (1 + self.ce_gamma(a_expanded)) + self.ce_beta(a_expanded))
 
         return y_star_hat
     
@@ -96,13 +108,21 @@ class APTLayer(BaseModule):
     def __init__(self, info, hparams):
         super().__init__(info, hparams)
 
+        d1 = self.dim_layer
+        d2 = max(self.dim_layer // 2, 4)
+        d3 = max(self.dim_layer // 4, 2)
+        
         self.apt = torch.nn.Sequential(
             GRLayer(self.lambda_),
-            torch.nn.Linear(self.dim_x, self.dim_apt_1),
+            torch.nn.Linear(self.dim_x, d1),
+            torch.nn.LayerNorm(d1),
             torch.nn.SiLU(),
-            torch.nn.Linear(self.dim_apt_1, self.dim_apt_2),
+            torch.nn.Linear(d1, d2),
+            torch.nn.LayerNorm(d2),
             torch.nn.SiLU(),
-            torch.nn.Linear(self.dim_apt_2, self.dim_a))
+            torch.nn.Linear(d2, d3),
+            torch.nn.SiLU(),
+            torch.nn.Linear(d3, self.dim_a))
         
     def forward(self, v):
         a_anti_hat = self.apt(v)
@@ -142,8 +162,8 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
             x, a, yf = x.to(device), a.to(device), yf.to(device)
             y_star_hat, a_anti_hat, m_u, m_v = model(x, a, epoch)
 
-            loss_y = F.mse_loss(y_star_hat, yf)
-            loss_anti_a = F.mse_loss(a_anti_hat, a)
+            loss_y = F.smooth_l1_loss(y_star_hat, yf, beta=1.0)
+            loss_anti_a = F.smooth_l1_loss(a_anti_hat, a, beta=1.0)
             loss = coef_loss[0] * loss_y + coef_loss[1] * loss_anti_a + coef_loss[2] * m_u.mean() + coef_loss[3] * m_v.mean()
 
 
@@ -163,8 +183,8 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
                 x, a, yf = x.to(device), a.to(device), yf.to(device)
                 y_star_hat, a_anti_hat, m_u, m_v = model(x, a, epoch)
                 
-                loss_y = F.mse_loss(y_star_hat, yf)
-                loss_anti_a = F.mse_loss(a_anti_hat, a)
+                loss_y = F.smooth_l1_loss(y_star_hat, yf, beta=1.0)
+                loss_anti_a = F.smooth_l1_loss(a_anti_hat, a, beta=1.0)
                 loss = coef_loss[0] * loss_y + coef_loss[1] * loss_anti_a + coef_loss[2] * m_u.mean() + coef_loss[3] * m_v.mean()
 
                 loss_val_y.append(loss_y.item())
