@@ -8,6 +8,22 @@ import matplotlib.pyplot as plt
 import utils
 import copy
 
+def rbf_kernel(X, sigma=1.0):
+    XX = X.matmul(X.t())
+    X_sqnorms = torch.diagonal(XX)
+    r = X_sqnorms.unsqueeze(0) - 2 * XX + X_sqnorms.unsqueeze(1)
+    K = torch.exp(-r / (2 * sigma ** 2))
+    return K
+
+def hsic_loss(X, Y, sigma_x=1.0, sigma_y=1.0):
+    K = rbf_kernel(X, sigma_x)
+    L = rbf_kernel(Y, sigma_y)
+    n = K.size(0)
+    H = torch.eye(n, device=X.device) - (1.0 / n) * torch.ones((n, n), device=X.device)
+    Kc = H.matmul(K).matmul(H)
+    hsic = torch.trace(Kc.matmul(L)) / ((n - 1) ** 2)
+    return hsic
+
 class BaseModule(nn.Module):
     def __init__(self, info, hparams):
         super().__init__()
@@ -42,14 +58,6 @@ class VSLayer(BaseModule):
             m = F.one_hot(m, num_classes=3).float()
 
         return m[:, 1], m[:, 2]
-    
-class GRLayer(nn.Module):
-    def __init__(self, lambda_=1):
-        super().__init__()
-        self.lambda_ = lambda_
-
-    def forward(self, x):
-        return utils.GradientReversalFunction.apply(x, self.lambda_)  
     
 class ResidualBlock(nn.Module):
     def __init__(self, dim):
@@ -104,31 +112,6 @@ class POLayer(BaseModule):
 
         return y_star_hat
     
-class APTLayer(BaseModule):
-    def __init__(self, info, hparams):
-        super().__init__(info, hparams)
-
-        d1 = self.dim_layer
-        d2 = max(self.dim_layer // 2, 4)
-        d3 = max(self.dim_layer // 4, 2)
-        
-        self.apt = torch.nn.Sequential(
-            GRLayer(self.lambda_),
-            torch.nn.Linear(self.dim_x, d1),
-            torch.nn.LayerNorm(d1),
-            torch.nn.SiLU(),
-            torch.nn.Linear(d1, d2),
-            torch.nn.LayerNorm(d2),
-            torch.nn.SiLU(),
-            torch.nn.Linear(d2, d3),
-            torch.nn.SiLU(),
-            torch.nn.Linear(d3, self.dim_a))
-        
-    def forward(self, v):
-        a_anti_hat = self.apt(v)
-
-        return a_anti_hat
-    
 class MainModel(BaseModule):
     def __init__(self, info, hparams):
         super().__init__(info, hparams)
@@ -137,9 +120,8 @@ class MainModel(BaseModule):
         m_u, m_v = self.vsl(epoch)
         u, v = x * m_u, x * m_v
         y_star_hat = self.pol(u + v, a)
-        a_anti_hat = self.aptl(v)
 
-        return y_star_hat, a_anti_hat, m_u, m_v
+        return y_star_hat, u, m_u, m_v
     
 def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loader_train, loader_val, coef_loss):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -150,21 +132,25 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
 
     for epoch in range(model.epoch_total):
         loss_train_y = []
-        loss_train_anti_a = []
+        loss_train_hsic = []
 
         loss_val_y = []
-        loss_val_anti_a = []
+        loss_val_hsic = []
 
         model.train()
         for x, a, yf in loader_train:
             optimizer_s.zero_grad()
             optimizer_p.zero_grad()
             x, a, yf = x.to(device), a.to(device), yf.to(device)
-            y_star_hat, a_anti_hat, m_u, m_v = model(x, a, epoch)
+            y_star_hat, u, m_u, m_v = model(x, a, epoch)
 
             loss_y = F.smooth_l1_loss(y_star_hat, yf, beta=1.0)
-            loss_anti_a = F.smooth_l1_loss(a_anti_hat, a, beta=1.0)
-            loss = coef_loss[0] * loss_y + coef_loss[1] * loss_anti_a + coef_loss[2] * m_u.mean() + coef_loss[3] * m_v.mean()
+            
+            # Use HSIC to penalize dependency between Outcome-Predictors (u) and Treatment (a)
+            # a is safely reshaped to 2D (batch_size, 1) for HSIC
+            loss_hsic_val = hsic_loss(u, a.view(-1, 1), sigma_x=1.0, sigma_y=1.0)
+            
+            loss = coef_loss[0] * loss_y + coef_loss[1] * loss_hsic_val + coef_loss[2] * m_u.mean() + coef_loss[3] * m_v.mean()
 
 
             loss.backward()
@@ -172,7 +158,7 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
             optimizer_p.step()
 
             loss_train_y.append(loss_y.item())
-            loss_train_anti_a.append(loss_anti_a.item())
+            loss_train_hsic.append(loss_hsic_val.item())
 
         scheduler_s.step()
         scheduler_p.step()
@@ -181,14 +167,14 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
         with torch.no_grad():
             for x, a, yf in loader_val:
                 x, a, yf = x.to(device), a.to(device), yf.to(device)
-                y_star_hat, a_anti_hat, m_u, m_v = model(x, a, epoch)
+                y_star_hat, u, m_u, m_v = model(x, a, epoch)
                 
                 loss_y = F.smooth_l1_loss(y_star_hat, yf, beta=1.0)
-                loss_anti_a = F.smooth_l1_loss(a_anti_hat, a, beta=1.0)
-                loss = coef_loss[0] * loss_y + coef_loss[1] * loss_anti_a + coef_loss[2] * m_u.mean() + coef_loss[3] * m_v.mean()
+                loss_hsic_val = hsic_loss(u, a.view(-1, 1), sigma_x=1.0, sigma_y=1.0)
+                loss = coef_loss[0] * loss_y + coef_loss[1] * loss_hsic_val + coef_loss[2] * m_u.mean() + coef_loss[3] * m_v.mean()
 
                 loss_val_y.append(loss_y.item())
-                loss_val_anti_a.append(loss_anti_a.item())
+                loss_val_hsic.append(loss_hsic_val.item())
 
         history_train_y.append(sum(loss_train_y) / len(loss_train_y))
         history_val_y.append(sum(loss_val_y) / len(loss_val_y))
@@ -196,9 +182,9 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
         if epoch % 100 == 0 or epoch == model.epoch_total - 1:
             print(  f"Epoch {epoch:03d}/{model.epoch_total:03d} Done,\n"
                     f"Train: Y_Loss: {history_train_y[-1]:.4f} | "
-                    f"Anti_A: {sum(loss_train_anti_a) / len(loss_train_anti_a):.4f}")
+                    f"HSIC: {sum(loss_train_hsic) / len(loss_train_hsic):.4f}")
             print(  f"Valid: Y_Loss: {history_val_y[-1]:.4f} | "
-                    f"Anti_A: {sum(loss_val_anti_a) / len(loss_val_anti_a):.4f} | ")
+                    f"HSIC: {sum(loss_val_hsic) / len(loss_val_hsic):.4f} | ")
 
     epochs_range = range(1, len(history_train_y) + 1)
     plt.figure(figsize=(14, 5))
@@ -237,7 +223,7 @@ def evaluate(model, loader_test, coefs, dataset_type='ihdp', step=100):
         
         for x, a, yf in loader_test:
             x, a, yf = x.to(device), a.to(device), yf.to(device)
-            y_star_hat, a_anti_hat, m_u, m_v = model(x, a, epoch=model.epoch_total)
+            y_star_hat, u, m_u, m_v = model(x, a, epoch=model.epoch_total)
             uv = (x * m_u + x * m_v)   
 
             grid_size = 2 ** 6 + 1

@@ -65,11 +65,10 @@ def evaluate_model(data, dataset_type='ihdp', tune=None):
 
     selector = model.VSLayer(info, hparams)
     predictor_y = model.POLayer(info, hparams)
-    antipredictor_a = model.APTLayer(info, hparams)
-    model_main = model.MainModel(info = {"vsl": selector, "pol": predictor_y, "aptl": antipredictor_a}, hparams = {"epoch_total": hparams["epoch_total"]})
+    model_main = model.MainModel(info = {"vsl": selector, "pol": predictor_y}, hparams = {"epoch_total": hparams["epoch_total"]})
     
     param_s = list(selector.parameters())
-    param_p = list(predictor_y.parameters()) + list(antipredictor_a.parameters())
+    param_p = list(predictor_y.parameters())
 
     optimizer_s = torch.optim.Adam(param_s, lr = hparams["lr_s"])
     optimizer_p = torch.optim.Adam(param_p, lr = hparams["lr_p"], weight_decay = hparams['weight_decay'])

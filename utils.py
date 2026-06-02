@@ -1,10 +1,10 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.feature_selection import mutual_info_regression
+import torch
 
 try:
     import ignite.metrics
-    import torch
     import ignite
     
     class GradientReversalFunction(torch.autograd.Function):

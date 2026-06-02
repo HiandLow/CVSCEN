@@ -1,0 +1,844 @@
+\documentclass{article}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{subfigure}
+\usepackage{booktabs} 
+\usepackage{multirow}
+\usepackage{hyperref}
+%\usepackage{icml2026}
+\usepackage{kotex}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{subcaption} 
+\usepackage[accepted]{icml2026}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+\usepackage{amsthm}
+\usepackage{enumitem}
+\usepackage{bm}
+
+\usepackage[capitalize,noabbrev]{cleveref}
+\usepackage{booktabs}
+\usepackage[table]{xcolor}
+\theoremstyle{plain}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+\newtheorem{axiom}[theorem]{Axiom}
+\newtheorem{proof sketch}[theorem]{Proof Sketch}
+% Custom operators
+\definecolor{darkblue}{rgb}{0.0, 0.1, 0.5}
+\icmltitlerunning{Adaptive Variable Selection for Continuous Treatment Effect Estimation}
+
+\begin{document}
+\twocolumn[
+\icmltitle{Adaptive Variable Selection for Continuous Treatment Effect Estimation}
+
+\begin{icmlauthorlist}
+
+\icmlauthor{Hyunsoo Cho}{kaist}
+\icmlauthor{Taeseong Yoon}{kaist}
+\icmlauthor{Insu Jung}{kaist}
+\icmlauthor{Heeyoung Kim}{kaist}
+\end{icmlauthorlist}
+
+\icmlaffiliation{kaist}{Department of Industrial and Systems Engineering, Korea Advanced Institute of Science and Technology, Daejeon, Korea}
+
+\icmlcorrespondingauthor{Heeyoung Kim}{heeyoungkim@kaist.ac.kr}
+
+\vskip 0.3in
+]
+\printAffiliationsAndNotice{} 
+% Abstract 수정본
+\begin{abstract}
+Estimating treatment effects under continuous treatments is a fundamental problem in causal inference from observational data. 
+While recent advancements have improved continuous treatment effect estimation through sophisticated representation learning and uncertainty quantification, a common strategy remains to include all observed covariates to avoid omitting potential confounders. However, indiscriminately incorporating all variables may introduce irrelevant predictors or instrumental variables, which can degrade estimation performance and hinder the identification of causal structure.
+To address this challenge, we consider the problem of estimating continuous treatment effects with explicit causal variable selection.
+We propose the \textit{Continuous Variable Selection Causal Estimation Network} (\textbf{CVSCEN}), an end-to-end neural framework that jointly learns variable selection and treatment effect estimation for continuous treatments. 
+CVSCEN performs causal role–aware variable selection by distinguishing confounders and outcome predictors while filtering out irrelevant variables, enabling more reliable estimation of continuous treatment effects.
+Experiments on fully synthetic and semi-synthetic datasets demonstrate that CVSCEN improves treatment effect estimation accuracy compared to existing state-of-the-art methods while providing more reliable identification of causal variables. 
+\end{abstract}
+
+\section{Introduction}
+Recently, causal inference and the estimation of the effect of treatment using observational data have gained significant attention in diverse fields, including medicine, econometrics, and the social sciences \cite{rosenbaum1983central, rubin2005causal, imbens2015causal}.
+Although randomized controlled trials (RCTs) are considered the gold standard for evaluating treatment effects, their practical implementation is often limited by various real-world constraints.
+Consequently, the use of observational data has become a widely adopted approach to estimate treatment effects.
+
+To obtain unbiased estimates of the treatment effect from observational data, it is essential to accurately identify and control for confounders---variables that influence both the treatment and the outcome. 
+In the absence of a known underlying causal structure, traditional approaches have predominantly adopted a \textit{kitchen-sink} strategy, indiscriminately including all available covariates in the predictive model.
+However, incorporating covariates without accounting for their causal roles can inadvertently introduce spurious variables or instrumental variables (which affect only the treatment assignment), thereby reducing estimation efficiency and potentially amplifying bias. Therefore, identifying the correct causal structure through principled variable selection is a critical step for reliable estimation \cite{pearl2014confounding, greenewald2021high}.
+
+While the necessity of such causal variable selection has been widely recognized, existing methodologies have predominantly focused on binary treatment settings\textbf{.} This is largely due to the mathematical simplicity and statistical stability rooted in the traditional treatment/control framework of clinical trials. However, a paradigm shift is underway, driven by the explosive accumulation of high-resolution observational data, such as electronic health records (EHR) and real-time platform logs. This enables the utilization of continuous values representing the intensity or dosage of an intervention without information loss. In many real-world decision-making scenarios—ranging from determining the optimal drug dosage in precision medicine to allocating optimal marketing budgets—treatments inherently take continuous values \cite{hirano2004propensity, imai2004causal, gogl2025dosesurv}. Consequently, accurately estimating the fine-grained dose-response curve associated with continuous treatment intensity, rather than merely identifying the presence or absence of a treatment, has emerged as a crucial challenge in both academia and practice.
+
+Recognizing the importance of continuous treatment environments, various methods for continuous treatment effect estimation have been proposed, including deep learning-based approaches and data-driven variable selection methods. 
+Deep learning-based methodologies, such as VCNet \cite{nie2021vcnet} and SCIGAN \cite{bica2020estimating}, are particularly effective at capturing nonlinear causal relationships among high-dimensional covariates. 
+More recently, significant advancements have been made in top machine learning venues to further improve continuous treatment effect estimation. These include methods leveraging adversarially balanced representations to mitigate confounding bias \cite{adversarial2024balanced}, exploiting gradient interpolation and kernel smoothing for robust estimation \cite{nagalapatti2024continuous}, and integrating proximal causal learning frameworks \cite{doublyrobust2024proximal}. Furthermore, robust inference against measurement errors \cite{gao2024variational} and conformal prediction for reliable uncertainty quantification \cite{schroder2024conformal} have been actively explored.
+However, despite these sophisticated architectural and theoretical innovations, most of these models typically utilize all observed variables indiscriminately as predictive features, without explicitly excluding irrelevant or noisy covariates.
+
+To address this issue, another line of research focuses on data-driven variable selection for causal estimation. 
+However, existing approaches also exhibit notable limitations. 
+Lasso-based techniques cannot structurally distinguish confounders from the pure outcome predictors \cite{tibshirani1996regression, greenewald2021high}. 
+Similarly, latent factor decomposition methods based on deep neural networks suffer from the inherent unidentifiability of the latent representations, which raises concerns about misinterpreting the true causal contributions of covariates \cite{schwab2020learning, bica2020estimating}. 
+
+
+Recent end-to-end models attempt to jointly perform treatment effect estimation and explicit variable selection.
+Nevertheless, most are restricted to binary treatment settings \cite{ma2025simultaneous}, which limits their applicability to continuous treatment scenarios. 
+Moreover, they typically require the number of selected variables to be specified a priori \cite{ma2025simultaneous}. As a result, these methods implicitly assume prior knowledge of the very causal structure they are intended to uncover. 
+
+
+To address these limitations, we propose the \textit{Continuous Variable Selection Causal Estimation Network} (CVSCEN), a framework designed to simultaneously perform continuous treatment effect estimation and causal variable selection from observational data.
+At its core, CVSCEN integrates a causal role-aware variable selection module with an outcome prediction module into a unified, end-to-end neural architecture. Specifically, without requiring user intervention or prior structural assumptions, the network autonomously separates confounders and outcome predictors during the optimization of the overall objective function. To ensure the reliability of this separation, we introduce two key mechanisms.
+First, a dependence-based guidance term is incorporated into the variable selection process to reduce ambiguity. Second, we employ the Hilbert-Schmidt Independence Criterion (HSIC) to explicitly regularize the outcome-predictor representation, mathematically ensuring that it remains strictly independent of the treatment variable. Third, an outcome prediction layer estimates factual outcomes and induces the learned dose-response function.
+
+CVSCEN is evaluated on both fully synthetic datasets with known causal structures and semi-synthetic benchmarks derived from IHDP. The experimental results demonstrate that the proposed framework reliably identifies causal variables while achieving competitive performance in continuous treatment effect estimation compared to state-of-the-art baselines.
+
+The main contributions of this study are summarized as follows:
+\begin{itemize}
+    \item \textbf{(i) End-to-end causal inference framework for continuous treatments.}: We propose CVSCEN, an end-to-end differentiable framework that enables causal variable selection for continuous treatment effect estimation. The model jointly learns causal variable selection and treatment effect estimation directly from raw observational data without requiring prior knowledge of the underlying causal structure. 
+    \item \textbf{(ii) Adaptive variable selection without predefined cardinality}: %
+    CVSCEN autonomously discovers the optimal set of causal variables without requiring the user to pre-specify the number of selected variables, while mitigating redundant selections between confounders and outcome predictors. 
+    \item \textbf{(iii) Reliable causal variable identification without competitive predictive performance}: Extensive experiments on fully synthetic datasets with known causal structures and semi-synthetic benchmarks based on IHDP demonstrate that CVSCEN achieves reliable causal variable identification while maintaining continuous treatment effect estimation performance competitive with state-of-the-art baselines.
+\end{itemize} 
+
+\section{Related Works}
+
+\subsection{Continuous Treatment Effect Estimation}
+Traditional approaches to continuous treatment effect estimation often rely on the generalized propensity score \cite{hirano2004propensity, imai2004causal} or targeted maximum likelihood estimation. However, these methods typically require strict parametric assumptions regarding the treatment assignment mechanism. Recently, deep learning has emerged as a powerful tool to capture complex nonlinear dependencies in causal inference. For instance, SCIGAN \cite{bica2020estimating} utilizes generative adversarial networks to estimate continuous interventions, while VCNet \cite{nie2021vcnet} employs varying coefficient neural networks combined with targeted regularization. Additionally, DRNet \cite{schwab2020learning} subdivides the continuous treatment space into bins to learn counterfactual representations. 
+More recent studies have further advanced the field by introducing adversarially balanced representations \cite{adversarial2024balanced}, gradient interpolation techniques \cite{nagalapatti2024continuous}, proximal causal learning \cite{doublyrobust2024proximal}, and conformal prediction for uncertainty quantification \cite{schroder2024conformal, gao2024variational}. Despite these successes, most of these architectures utilize the entire set of observed covariates indiscriminately, which can degrade performance if irrelevant or purely instrumental variables are present.
+
+\subsection{Variable Selection for Causal Inference}
+To mitigate the adverse effects of spurious or irrelevant variables, data-driven variable selection has been studied extensively in causal inference. 
+Standard regularization techniques, such as the Lasso \cite{tibshirani1996regression}, can shrink the coefficients of non-predictive variables to zero. However, they are optimized purely for prediction and cannot structurally differentiate between confounders and outcome predictors, potentially leading to biased causal estimates \cite{greenewald2021high}. 
+To address this, advanced statistical methods like Double/Debiased Machine Learning (DML) \cite{chernozhukov2018double} and Generalized Random Forests (GRF) \cite{athey2019generalized} have been proposed to orthogonalize the nuisance parameters and provide robust causal estimates even in high-dimensional settings. Recently, these methods have been extended to continuous treatments \cite{zenati2025double}, implicitly performing variable selection via flexible nuisance estimators. Alternatively, AutoML frameworks like AutoCATE \cite{vanderschueren2025autocate} automate feature and model selection as a pre-processing pipeline. While effective, these approaches separate variable selection from the core causal estimation network rather than optimizing them jointly.
+
+Within end-to-end deep learning, recent state-of-the-art continuous treatment methods rely on representation learning to filter out irrelevant information. For instance, CSB \cite{vanremmerden2026continuous} employs an Information Bottleneck to implicitly compress non-causal variables in the latent space. While this provides a ``soft'' selection mechanism, it lacks the interpretability of explicit variable isolation. On the other hand, explicit variable selection models utilizing stochastic relaxations \cite{jang2017categorical, maddison2017concrete} exist, but are predominantly restricted to binary treatments and require the number of selected variables to be specified in advance \cite{ma2025simultaneous}. 
+
+In contrast, CVSCEN is the first deep learning architecture specifically designed to perform \textit{explicit (hard) causal variable selection} natively within an end-to-end framework for continuous treatments. It dynamically determines the optimal subset of confounders and outcome predictors without any predefined cardinality constraints, uniquely bridging the gap between interpretable feature selection and expressive deep causal estimation.
+
+\section{Background}
+\subsection{Continuous Treatment Effect Estimation}
+We consider causal effect estimation with continuous treatment under the potential outcomes framework \cite{rubin2005causal, imbens2015causal}. 
+Let \(A \in \mathcal{A}\subseteq \mathbb{R}\) denote a continuous treatment and let \(\mathbf{X}\in\mathcal{X}\subseteq\mathbb{R}^d\) denote pre-treatment covariates. 
+For each unit \(i\), \(Y_i(a)\) denotes the potential outcome that would be observed under the intervention \(A_{i} = a\). 
+We write \(Y(a)\) for the corresponding population-level potential outcome.
+
+Because each unit is observed under only one realized treatment level, the full individual response curve $a \mapsto Y_i(a)$ is not observed. 
+The central estimands are therefore conditional and marginal dose-response functions \cite{hirano2004propensity, imai2004causal}.
+The \textit{conditional average dose--response function} (CADRF) is
+\begin{equation}
+    \mu(a,\mathbf{x}):=\mathbb{E}\!\left[Y(a)\mid \mathbf{X}=\mathbf{x}\right],
+\end{equation}
+which represents the expected potential outcomes at treatment level \(a\) for units with covariates \(\mathbf{X}=\mathbf{x}\). 
+The population-level \textit{average dose--response function} (ADRF) is
+\begin{equation}
+    \mathrm{ADRF}(a):=\mathbb{E}\!\left[Y(a)\right]=\int\mu(a,\mathbf{x})\,dF_{\mathbf{X}}(\mathbf{x}),
+\end{equation}
+where \(F_{\mathbf{X}}\) is the marginal covariate distribution.
+The ADRF summarizes the population-level causal response to changes in the continuous treatment. 
+
+\subsection{Identification from Observational Data}
+Identifying dose-response functions from observational data requires assumptions that connect the observed data distribution to the potential outcome distribution
+\cite{rosenbaum1983central, hirano2004propensity, imai2004causal}.
+
+\paragraph{Consistency.}
+If unit \(i\) receives treatment level \(A_i=a\), then the observed outcome equals the corresponding potential outcome:
+\[
+Y_i = Y_i(A_i) = Y_i(a).
+\]
+
+\paragraph{Unconfoundedness.}
+For every treatment level \(a\in\mathcal{A}\), treatment assignment is independent of the potential outcome conditional on observed covariates:
+\[
+Y(a)\perp\!\!\!\perp A \mid \mathbf{X}.
+\]
+This assumption rules out unobserved confounding and requires the observed covariates to contain a sufficient adjustment set.
+
+\paragraph{Overlap.}
+For all covariate values in the support of \(\mathbf{X}\), the conditional treatment density is positive over the treatment levels of interest:
+\[
+f_{A\mid \mathbf{X}}(a\mid \mathbf{x})>0,\qquad a\in\mathcal{A},\ \mathbf{x}\in\mathrm{supp}(\mathbf{X}).
+\]
+
+Under these assumptions, the conditional dose--response function is identifiable as
+\begin{equation}
+    \mu(a,\mathbf{x})=\mathbb{E}\!\left[Y\mid A=a,\mathbf{X}=\mathbf{x}\right],
+\end{equation}
+and the ADRF is identifiable by covariate adjustment:
+\begin{equation}
+    \mathrm{ADRF}(a)
+    =
+    \int
+    \mathbb{E}\!\left[Y\mid A=a,\mathbf{X}=\mathbf{x}\right]
+    dF_{\mathbf{X}}(\mathbf{x}).
+\end{equation}
+
+In observational studies, observed covariates may play different causal roles, including confounders \(\mathbf{X}_C\), outcome predictors \(\mathbf{X}_P\), instrumental variables \(\mathbf{X}_I\), and irrelevant variables \(\mathbf{X}_N\). 
+Under the assumed role partition, adjusting for confounders is necessary to remove confounding bias, while including outcome predictors can improve outcome modeling and finite-sample efficiency. 
+Thus, the union \(\mathbf{X}_C\cup\mathbf{X}_P\) provides a sufficient adjustment set whenever it is c-equivalent to the full covariate set \(\mathbf{X}\) 
+\cite{pearl2014confounding, greenewald2021high}. 
+In contrast, variables that affect treatment only, such as instruments, are not required for identification and may adversely affect finite-sample estimation, while irrelevant variables can increase noise and estimation variance.
+
+\subsection{End-to-End Variable Selection via Concrete Relaxation}
+
+Variable selection is inherently discrete: each covariate must be either selected or excluded, or assigned to one of several possible roles. 
+Such discrete decisions are non-differentiable, making them difficult to optimize jointly with neural treatment effect estimators using standard backpropagation. 
+A common strategy is therefore to replace discrete selection variables with differentiable stochastic relaxations, such as the Concrete or Gumbel--Softmax distribution \cite{maddison2017concrete,jang2017categorical}.
+
+Consider a categorical selector for covariate $X_j$ over $K$ possible categories. 
+Let $\boldsymbol{\ell}_j=(\ell_{j,1},\ldots,\ell_{j,K})$ denote learnable logits, and let $g_{j,k}$ be independent Gumbel noise. 
+The relaxed categorical assignment is given by
+\begin{equation}
+    z_{j,k}
+    =
+    \frac{
+        \exp\left((\ell_{j,k}+g_{j,k})/\tau\right)
+    }{
+        \sum_{m=1}^{K}
+        \exp\left((\ell_{j,m}+g_{j,m})/\tau\right)
+    }, \forall k \in [K]
+\end{equation}
+where $\tau>0$ is a temperature parameter. 
+For large $\tau$, the relaxed assignment is smooth and encourages exploration across categories. 
+As $\tau$ decreases, the distribution becomes increasingly concentrated and approaches a one-hot categorical assignment in the low-temperature limit.
+
+This relaxation enables variable selection modules to be trained end-to-end as part of a neural architecture. 
+During training, the relaxed assignments provide differentiable masks through which gradients can be propagated. 
+At inference time, the learned assignment can be discretized by selecting the category with the largest logit or relaxed probability. 
+In the next section, we instantiate this general mechanism for causal role-aware variable selection in continuous treatment effect estimation.
+
+\section{CVSCEN: Continuous Variable Selection Causal Estimation Network}
+\label{sec:cvscen}
+CVSCEN is an end-to-end neural framework for continuous treatment effect estimation with causal role-aware variable selection. Given an observational dataset $\mathcal{D}=\{(\mathbf{x}_i,a_i,y_i)\}_{i=1}^{n}$, where \(\mathbf{x}_i\in\mathbb{R}^{d}\) denotes pre-treatment covariates, \(a_i\in\mathbb{R}\) denotes a continuous treatment, and \(y_i\in\mathbb{R}\) denotes the observed outcome, CVSCEN jointly learns covariate role assignments and a treatment-aware outcome model.
+
+The learned outcome model is denoted by
+\[
+\hat{\mu}_{\Theta}(a,\mathbf{x})\approx \mathbb{E}[Y\mid A=a,X=\mathbf{x}],
+\]
+where \(\Theta\) denotes the trainable parameters of the outcome prediction module and the variable selection layer. For unit \(i\), the estimated individual-level dose-response function is
+\[
+\widehat{\mathrm{DRF}}_{i}(a)=\hat{\mu}_{\Theta}(a,\mathbf{x}_{i}).
+\]
+The population-level average dose-response function is estimated by averaging over the empirical covariate distribution:
+\[
+\widehat{\mathrm{ADRF}}(a)=\frac{1}{n}\sum_{i=1}^{n}\hat{\mu}_{\Theta}(a,\mathbf{x}_{i}).
+\]
+
+CVSCEN assigns each covariate to one of three roles,
+\[
+\mathcal{R}=\{0,C,P\},
+\]
+where \(0\) denotes an irrelevant variable, \(C\) denotes a confounder, and \(P\) denotes an outcome predictor. 
+Confounders are variables that are relevant for adjustment because they are associated with both treatment assignment and outcome generation. Outcome predictors are variables that improve outcome prediction but are not explicitly treated as confounders. 
+Variables assigned to the irrelevant role are excluded from the downstream prediction modules.
+
+The architecture consists of three components.
+First, a dynamic variable selection layer produces differentiable role-specific masks for confounders and outcome predictors. 
+Second, a Hilbert-Schmidt Independence Criterion (HSIC) penalty discourages the outcome-predictor representation from encoding treatment-predictive information. Third, an outcome prediction layer estimates factual outcomes and induces the learned dose-response function. The full model is trained end-to-end using an outcome prediction loss, an HSIC independence penalty, and a sparsity regularization term.
+
+\subsection{Dynamic Variable Selection Layer}
+\label{sec:dynamic_variable_selection}
+\paragraph{Role Assignment.} The dynamic variable selection layer assigns each covariate to a causal role and constructs role-specific stochastic masks. For each covariate \(X_j\), the layer maintains a learnable logit vector
+\[
+\ell_j=(\ell_{j,0},\ell_{j,C},\ell_{j,P})\in\mathbb{R}^{3},
+\]
+where \(\ell_{j,r}\) represents the assignment score of covariate \(X_j\) to role \(r\in\mathcal{R}\).
+
+To obtain differentiable stochastic assignments, we use a Gumbel-Softmax relaxation \cite{jang2017categorical, maddison2017concrete}. At epoch \(e\), the relaxed assignment probability of covariate \(X_j\) to role \(r\) is
+\[
+\pi_{j,r}^{(e)}=\frac{\exp\left(\eta_{j,r}^{(e)}/\tau_e\right)}{\sum_{r'\in\mathcal{R}}\exp\left(\eta_{j,r'}^{(e)}/\tau_e\right)},
+\]
+where \(\tau_e>0\) is the temperature parameter and
+\[
+\eta_{j,r}^{(e)}=\ell_{j,r}+\mathbb{I}(\tau^{(e)} \le 1.0)\mathbb{I}(r=C)\beta \widetilde{\rho}_j+g_{j,r}^{(e)}.
+\]
+Here \(g_{j,r}^{(e)}\) is an i.i.d. Gumbel random variable, \(\mathbb{I}(\cdot)\) denotes the indicator function, \(\tau^{(e)}\) is the temperature at epoch \(e\), and \(\beta\geq 0\) controls the strength of the guidance term.
+
+The relaxed confounder and outcome-predictor masks are defined as
+\[
+m^{C,(e)}=\left(\pi_{1,C}^{(e)},\ldots,\pi_{d,C}^{(e)}\right),\ \ 
+m^{P,(e)}=\left(\pi_{1,P}^{(e)},\ldots,\pi_{d,P}^{(e)}\right).\]
+For unit \(i\), the corresponding selected covariates are
+\[
+\mathbf{x}_{i}^{C}=m^{C,(e)}\odot \mathbf{x}_{i},\qquad \mathbf{x}_{i}^{P}=m^{P,(e)}\odot \mathbf{x}_{i},
+\]
+where \(\odot\) denotes element-wise multiplication. 
+Thus, downstream prediction modules receive role-specific covariate representations rather than the full covariate vector.
+
+\paragraph{Dependence-Based Guidance for Confounder Selection.}
+When learning the role-assignment logits in the dynamic variable selection layer, a central challenge is that both confounders and outcome predictors can be useful for predicting the outcome.
+Consequently, an outcome-based training signal alone may not reliably distinguish variables to be adjusted from those that are only predictive of the outcome. 
+To reduce this ambiguity, CVSCEN introduces dependence-based guidance that softly favors assigning treatment-dependent covariates to the confounder role.
+The guidance term is motivated by the defining property of confounders: confounders are associated with both treatment assignment and outcome generation. 
+To capture these associations, we utilize the Hilbert-Schmidt Independence Criterion (HSIC). HSIC is extensively employed in causal inference and high-dimensional feature selection due to its robust, non-parametric ability to detect complex, non-linear dependencies without requiring a predefined functional form \cite{yamada2014high}. 
+For each covariate \(X_j\), we compute an empirical dependence score between the observed covariate values and the observed treatments:
+\[
+\rho_j=\widehat{\mathrm{HSIC}}\left(\{\mathbf{x}_{i,j}\}_{i=1}^{n},\{a_i\}_{i=1}^{n}\right),
+\]
+where \(\widehat{\mathrm{HSIC}}\) denotes the empirical Hilbert--Schmidt Independence Criterion \cite{gretton2005measuring, gretton2007kernel}.
+
+The raw dependence scores are standardized across covariates and bounded as
+\[
+\widetilde{\rho}_j=\tanh\left(\frac{\rho_j-\mu_{\rho}}{\sigma_{\rho}+\epsilon}\right),\]
+where \(\mu_{\rho}\) and \(\sigma_{\rho}\) are the empirical mean and standard deviation of \(\{\rho_j\}_{j=1}^{d}\), and \(\epsilon>0\) is a small constant for numerical stability.
+
+The normalized score \(\widetilde{\rho}_j\in(-1,1)\) is added only to the confounder logit and only when the temperature satisfies \(\tau^{(e)} \le 1.0\). This activation threshold is not an arbitrary heuristic but a mathematical critical point (phase transition) of the Gumbel-Softmax distribution. When \(\tau > 1.0\), the distribution is artificially smoothed (high entropy), encouraging pure exploration of data-driven predictive signals. When \(\tau\) drops to exactly \(1.0\), the network's relaxed probability precisely matches its learned logits without artificial distortion. By activating the structural guidance (HSIC) exactly at this mathematical boundary, CVSCEN ensures that the causal constraint is smoothly integrated only after the base predictive representations have naturally converged, preventing the prior from distorting the early exploration phase. 
+After the guidance is activated, covariates with above-average dependence on the treatment receive a positive shift in their confounder logits, whereas covariates with below-average dependence receive a negative shift. Thus, the HSIC-based term acts as a soft causal prior for confounder selection.
+
+\subsection{HSIC Independence Regularization}
+\label{sec:treatment_anti_prediction}
+
+As established in Section \ref{sec:dynamic_variable_selection}, the selected outcome-predictive variables $\mathbf{X}_P$ should contain no causal information about the treatment selection mechanism. To enforce this critical structural assumption, CVSCEN imposes a mathematically rigorous independence penalty. 
+
+Rather than relying on the unstable min-max optimization of adversarial networks (such as a Gradient Reversal Layer), we propose directly minimizing the empirical Hilbert-Schmidt Independence Criterion (HSIC) between the learned outcome-predictor representation $u_i = m_{i,P} \mathbf{x}_i$ and the continuous treatment variable $A$. HSIC is a non-parametric kernel-based statistic that captures both linear and non-linear dependencies \cite{gretton2005measuring}. By driving $\mathrm{HSIC}(u, a)$ to zero, we guarantee exact statistical independence, effectively severing any leakage of instrumental or confounding signals into the outcome predictor space:
+\[
+\mathcal{L}_{\mathrm{hsic}} = \widehat{\mathrm{HSIC}}(u, a).
+\]
+This mathematically elegant constraint stabilizes the end-to-end training while structurally isolating pure outcome predictors.
+
+\subsection{Outcome Prediction Layer}
+\label{sec:outcome_prediction}
+\paragraph{Selected Covariate Representation.} 
+The \textit{outcome prediction layer} estimates factual outcomes using the observed treatment and the selected covariates. For unit \(i\), the selected covariates are formed by combining the confounder and outcome-predictor components: $\mathbf{x}_{i}^{\mathrm{CP}}:=[\mathbf{x}_{i}^{C},\mathbf{x}_{i}^{P}].$
+The outcome prediction layer uses \(\mathbf{x}_{i}^{\mathrm{CP}}\) and \(a_i\) to estimate the observed outcome \(y_i\).
+
+This selective construction excludes variables assigned to the irrelevant role and reduces the influence of covariates that are not useful for outcome prediction. 
+
+\paragraph{Treatment-Conditioned Affine Modulation.} For continuous treatments, directly concatenating a scalar treatment with a high-dimensional covariate representation can make the treatment signal relatively weak. CVSCEN therefore uses \textit{treatment-conditioned affine modulation} \cite{perez2018film} to inject treatment information into the covariate representation.
+
+First, the scalar treatment $a_i \in [0,1]$ is mapped to a higher-dimensional treatment feature vector via NeRF-style positional encoding \cite{mildenhall2020nerf} with $L$ frequency bands:
+\[
+\varphi(a_i)=\Bigl[a_i,\;\sin(2^0\pi a_i),\;\cos(2^0\pi a_i),\;\sin(2^1\pi a_i),\;\cos(2^1\pi a_i),\;\ldots,\;\sin(2^{L-1}\pi a_i),\;\cos(2^{L-1}\pi a_i)\Bigr]^{\!\top}\in\mathbb{R}^{1+2L}.
+\]
+This encoding is theoretically motivated by the well-established \textit{spectral bias} of standard MLPs \cite{rahaman2019spectral}: as shown via Neural Tangent Kernel (NTK) analysis, MLPs are inherently biased toward learning low-frequency functions and converge exponentially slowly on high-frequency components. Mapping the scalar treatment through sinusoidal functions shifts the NTK eigenvalue spectrum toward higher frequencies \cite{tancik2020fourier}, enabling the network to capture both the macroscopic global trend of the dose-response curve (low-frequency bands) and sharp, localized non-linear fluctuations (high-frequency bands) simultaneously. Following the log-linear frequency schedule of NeRF \cite{mildenhall2020nerf}, geometrically increasing frequencies ($2^0, 2^1, \ldots, 2^{L-1}$) ensure comprehensive spectral coverage without redundancy.
+
+The original scalar $a_i$ is explicitly included alongside the sinusoidal features for two complementary reasons. First, pure sinusoidal bases span the space of periodic functions and require theoretically infinitely many terms to represent a simple monotonic trend. Including $a_i$ directly provides this linear component in a single term, maximizing representational efficiency. Second, following the standard practice in NeRF implementations of concatenating raw coordinates with their positional encodings \cite{mildenhall2020nerf}, the original $a_i$ serves as a low-frequency anchor that prevents information loss and stabilizes learning of the global dose-response trend. The number of frequency bands $L$ is treated as a hyperparameter (default $L=3$, yielding $\varphi(a_i)\in\mathbb{R}^{7}$).
+
+Next, the selected covariates are mapped to a latent representation:
+\[
+h_i^{\mathrm{CP}}=g_{\boldsymbol{\phi}_X}(\mathbf{x}_{i}^{\mathrm{CP}}),
+\]
+where \(g_{\boldsymbol{\phi}_X}\) is a covariate feature extractor. 
+The treatment feature vector \(\varphi(a_i)\) is then used to generate feature-wise scale and shift parameters:
+\[
+\gamma_i=g_{\boldsymbol{\phi}_{\gamma}}(\varphi(a_i)),\qquad\delta_i=g_{\boldsymbol{\phi}_{\delta}}(\varphi(a_i)).
+\]
+The vectors \(\gamma_i\) and \(\delta_i\) have the same dimension as \(h_i^{\mathrm{CP}}\).
+Here, \(\gamma_i\) rescales each latent covariate feature according to the treatment level, while \(\delta_i\) shifts each feature by a treatment-dependent offset.
+
+The \textit{treatment-conditioned representation} is obtained by affine modulation:
+\[
+\widetilde{h}_i=h_i^{\mathrm{CP}}\odot \gamma_i+\delta_i.
+\]
+The predicted outcome is then given by
+\[
+\hat{y}_i=f_{\boldsymbol{\theta}}(\widetilde{h}_i),
+\]
+where \(f_{\boldsymbol{\theta}}\) is the final outcome prediction network.
+
+\paragraph{Dose-Response Estimator.}
+For an arbitrary treatment level \(a\), the learned dose-response estimator for unit \(i\) is
+\[
+\hat{\mu}_{\Theta}(a,\mathbf{x}_{i})=f_{\boldsymbol{\theta}}\left(g_{\boldsymbol{\phi}_X}(\mathbf{x}_{i}^{\mathrm{CP}})\odot g_{\boldsymbol{\phi}_{\gamma}}(\varphi(a))+
+g_{\boldsymbol{\phi}_{\delta}}(\varphi(a))
+\right).
+\]
+This formulation treats the treatment as an active conditioning variable rather than a weak concatenated input. 
+By modulating the selected covariate representation as a function of the treatment level, CVSCEN can model heterogeneous dose-response patterns while relying only on variables selected as confounders or outcome predictors.
+
+\subsection{End-to-End Training of CVSCEN}
+\label{sec:end_to_end_training}
+
+CVSCEN is trained end-to-end to jointly learn role-aware variable selection and continuous treatment effect estimation. 
+The training objective combines three terms: an outcome prediction loss \(\mathcal{L}_{Y}\), an HSIC independence penalty \(\mathcal{L}_{\mathrm{hsic}}\), and a sparsity regularization term \(\mathcal{L}_{\mathrm{reg}}\).
+
+The HSIC independence penalty mathematically guarantees that the outcome-predictor representation encodes no treatment-predictive information. 
+The overall loss function is given by:
+
+\[
+\mathcal{L}=\mathcal{L}_{Y}+\lambda_{\mathrm{hsic}}\mathcal{L}_{\mathrm{hsic}}+\lambda_{\mathrm{reg}}\mathcal{L}_{\mathrm{reg}},
+\]
+where \(\lambda_{\mathrm{hsic}}\geq 0\) and \(\lambda_{\mathrm{reg}}\geq 0\) control the contributions of the HSIC penalty and the sparsity regularization term, respectively.
+
+The outcome prediction loss fits the observed factual outcomes using the Huber (Smooth L1) loss, which provides robustness against heavy-tailed outliers often present in observational data \cite{huber1992robust}:
+\[
+\mathcal{L}_{Y}=\frac{1}{n}\sum_{i=1}^{n} \ell_{\delta}\left(y_i-\hat{y}_i\right),
+\]
+where \(\hat{y}_i=\hat{\mu}_{\Theta}(a_i,\mathbf{x}_{i})\), and \(\ell_{\delta}(z) = \frac{1}{2}z^2\) if \(|z| \leq \delta\), and \(\delta(|z| - \frac{1}{2}\delta)\) otherwise. We set \(\delta=1.0\).
+
+The sparsity regularization term is formally defined as the Expected \(L_0\) Norm Regularization under the Gumbel-Softmax continuous relaxation \cite{louizos2018learning}:
+\[
+\mathcal{L}_{\mathrm{reg}}=\frac{1}{2d}\sum_{j=1}^{d}\left(\mathbb{E}\big[\|\mathbf{m}_{j,C}\|_0\big] + \mathbb{E}\big[\|\mathbf{m}_{j,P}\|_0\big]\right) = \frac{1}{2d}\sum_{j=1}^{d}\left(\pi_{j,C}^{(e)}+\pi_{j,P}^{(e)}\right).
+\]
+Because \(\pi_{j,C}^{(e)}\) and \(\pi_{j,P}^{(e)}\) represent the continuous relaxation of the inclusion probabilities, their sum mathematically equals the expected number of selected variables. This term elegantly penalizes the expected \(L_0\) norm without requiring non-differentiable thresholding, thereby encouraging a minimal sufficient adjustment set while assigning uninformative variables to the irrelevant role.
+
+After training, each covariate is assigned to the role with the largest learned logit:
+\[
+\widehat{r}_j=\arg\max_{r\in\mathcal{R}}\ell_{j,r}.\]
+The selected confounders and outcome predictors are then used to construct \(\mathbf{x}_{i}^{\mathrm{CP}}\), estimate the individual-level dose-response function \(\widehat{\mathrm{DRF}}_i(a)\), and compute the average dose-response function \(\widehat{\mathrm{ADRF}}(a)\).
+
+\section{Theoretical Analysis}
+CVSCEN introduces key theoretical advancements that enable robust variable selection and accurate continuous treatment effect estimation by providing theoretical justifications for its core components.
+
+\textbf{Convergence of the Relaxation Mechanism and Oracle Property.} Traditional causal inference theory establishes that nonconcave penalized regression models can achieve an \textit{oracle property}—selecting true confounders with consistency and achieving asymptotic optimal efficiency \cite{fan2001variable}. CVSCEN empirically inherits this property in a high-dimensional nonlinear space via its dynamic variable selection layer. By utilizing the Gumbel-Softmax distribution to continuously relax discrete causal role assignments \cite{louizos2018learning, yamada2020feature}, the network bridges end-to-end differentiable optimization with explicit discrete feature selection. As the temperature parameter $\tau \to 0$, this continuous relaxation mechanism ensures selection consistency, effectively identifying the true causal variables.
+
+\textbf{Structural Guarantee via HSIC Disentanglement.} Variable selection alone is insufficient to guarantee optimal efficiency if instrumental variables (\(\mathbf{X}_I\)) are selected, which leads to severe variance inflation in outcome regression \cite{pearl2014confounding}. The HSIC independence regularizer explicitly prevents this. By directly minimizing the Hilbert-Schmidt Independence Criterion between the selected outcome predictors $\mathbf{X}_P$ and the treatment variable $A$, CVSCEN mathematically enforces the conditional independence $\mathbf{X}_P \perp\!\!\!\perp A$ without relying on unstable min-max adversarial networks. This effectively filters out instrumental variables and achieves complete causal disentanglement between pure confounders ($\mathbf{X}_C$) and outcome predictors ($\mathbf{X}_P$), identifying the minimal sufficient adjustment set required for unbiased estimation.
+
+\textbf{Semi-parametric Efficiency without GPS Estimation.} In continuous treatment settings, inverse probability weighting based on the Generalized Propensity Score (GPS) suffers from the curse of dimensionality and the risk of infinite variance due to positivity violations \cite{imai2004causal}. CVSCEN proves that explicit GPS estimation is mathematically redundant when the outcome model is highly expressive. While standard neural networks suffer from spectral bias, CVSCEN's adoption of NeRF-style Fourier features \cite{tancik2020fourier} guarantees universal approximation even for high-frequency, non-linear dose-response curves. As shown by \cite{farrell2021deep}, when a deep neural network consistently estimates the true data generating process, plug-in G-computation achieves the semi-parametric efficiency bound. By combining Oracle-property variable selection with Fourier-enhanced outcome modeling, CVSCEN stably attains optimal estimation efficiency without relying on unstable GPS balancing.
+
+
+\section{Experiments}
+\subsection{Overview}
+The experiments aim to answer the following research questions:
+\begin{itemize}
+\item Q1. Can CVSCEN accurately estimate continuous treatment effects (i.e., the dose–response function)?
+\item Q2. Can CVSCEN correctly identify causal variables, including confounders and outcome predictors?
+%\item Q3. Does the proposed variable selection mechanism improve robustness by filtering out irrelevant variables?
+\end{itemize}
+
+Below, we describe the experimental settings, baselines, implementation details, and evaluation metrics.
+
+\paragraph{Experimental Setting}
+We conduct experiments under two settings: 
+(i) fully synthetic data and (ii) semi-synthetic data.
+In real-world datasets, the ground-truth causal effects are typically unknown. 
+However, synthetic and semi-synthetic settings allow us to quantitatively evaluate both treatment effect estimation accuracy and variable selection performance, since the true causal structure is available. 
+
+
+\paragraph{Baselines.}
+We compare the proposed method with representative baselines.
+\begin{itemize}
+    \item LR Lasso (LRL) \cite{tibshirani1996regression}: A linear regression model incorporating $L_1$ regularization for feature selection, used here as a baseline for linear causal estimation. 
+    \item CFDML (Causal Forest Double Machine Learning) \cite{chernozhukov2018double, athey2019generalized}: A non-parametric framework combining double machine learning with causal forests to flexibly estimate heterogeneous treatment effects while mitigating confounding biases.
+    \item LDML (Linear Double Machine Learning) \cite{chernozhukov2018double}: A double machine learning baseline that assumes a linear treatment effect, utilizing arbitrary machine learning models to partial out high-dimensional nuisance parameters (confounders).
+    \item DRNet (Dose Response Network) \cite{schwab2020learning}: A deep learning architecture designed for continuous treatments that partitions the dosage range into multiple strata and learns separate head networks to estimate the individual dose-response function.
+    \item SCIGAN \cite{bica2020estimating}: A generative framework that utilizes Generative Adversarial Networks (GANs) to predict counterfactual outcomes for continuous-valued interventions. 
+    \item VCNet (Variable Coefficient Network) \cite{nie2021vcnet}: A model for continuous treatments that uses varying coefficient layers to approximate the dose-response function. 
+    \item CVSCEN (Ours): Our proposed end-to-end framework that simultaneously performs causal role-aware variable selection and continuous treatment effect estimation. 
+\end{itemize}
+
+\paragraph{Implementation Details\\\\}
+
+\textbf{Network Architecture }The CVSCEN framework is implemented as an end-to-end neural network consisting of three functional modules, with a default hidden layer dimension of a multiple of $dim$(hyperparameter) across the main predictive paths.
+
+\begin{itemize}
+    \item \textbf{Dynamic Variable Selection Layer}  This layer maintains a learnable logit matrix of size $d \times 3$, where $d$ is the number of input covariates. During training, it produces three continuous masks $M_k \in [0, 1]^d$ to ensure stable gradient flow, while switching to discrete one-hot selections $M_k \in \{0, 1\}^d$ during test via argmax. Temperature $\tau$ anneals from 10.0 to 0.1.
+    
+    \item \textbf{Treatment Anti-Prediction Layer}  Structured as a multi-layer perceptron (MLP) following a Gradient Reversal Layer (GRL). It receives the $d$-dimensional masked outcome predictors $u$ as input. The architecture consists of three linear transformations with two hidden layers. ELU activation functions are applied between the hidden layers to model nonlinear dependencies. The final linear layer maps the hidden representation to a 1-dimensional scalar output, which represents the predicted continuous treatment $\hat{a}_{anti}$.
+    
+\item \textbf{Outcome Prediction Layer} receives the combined masked covariates -- $(u, v)$ -- and the 1-dimensional observed continuous treatment as inputs. To effectively capture complex interactions, its internal architecture employs a treatment-conditioned affine modulation strategy rather than a simple independent encoding. First, the continuous treatment is mapped into a 5-dimensional feature space using polynomial and trigonometric expansions. The network then utilizes a set of multi-layer perceptrons (MLPs) equipped with SiLU activation functions: a feature extractor processes the covariates, while two separate parameter networks process the expanded treatment to generate scale ($\gamma$) and shift ($\beta$) vectors. The extracted covariate representation is then dynamically modulated via an element-wise affine transformation using these treatment-derived parameters. Finally, a prediction MLP maps this modulated representation to a 1-dimensional scalar output.
+\end{itemize}
+
+\textbf{Hyperparameters} To ensure a fair comparison and optimal performance, we systematically tuned the hyperparameters for both our proposed model and the baseline methods. The search space included fundamental optimization parameters such as the learning rate and the total number of training epochs. For the objective function, we fine-tuned the weight parameters (e.g., $c_i$, and the imbalance parameter for CF) to properly balance the trade-offs among the different loss components. Furthermore, we treated the architectural configurations as hyperparameters, specifically searching for the optimal correlation point $\tau$ used for guidance. The complete grid search ranges for all evaluated hyperparameters are summarized in Table 1.
+\begin{table}[htbp]
+\centering
+\caption{Hyperparameters and ranges}
+\begin{tabular}{ll}
+\hline
+Parameters & Ranges \\
+\hline
+Learning rate& $\{0.1, 0.01, 0.001, 0.0001\}$ \\
+Number of epochs & $\{300, 500, 1000, 1500\}$ \\
+Weight parameter& $\{0.25, 0.5, 0.75, 1, 1.5, 3\}$\\
+ Dimension&$\{64, 128, 256\}$\\
+Correlation point $\tau$ & $\{0.5, 0.7, 0.9\}$ \\ \bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Training Details} All experiments and models were implemented using the PyTorch framework. The network parameters were optimized using the Adam optimizer to minimize the combined objective function. For robust evaluation, the datasets were randomly partitioned into training, validation, and test sets (63:27:10). The training set was used to update the model weights, while the validation set was utilized for hyperparameter tuning and selecting the best-performing model checkpoint to prevent overfitting. The final performance of the causal effect estimation was evaluated exclusively on the held-out test set.
+
+
+
+
+Following standard practice in treatment effect estimation, we evaluate treatment-effect estimation performance using two primary metrics: (i) mean integrated squared error (MISE) and (ii) absolute ADRF error. For variable selection, we report the false discovery rate (FDR) and true positive rate (TPR).
+
+\textbf{MISE} measures the estimation error of the individual-level dose–response function:
+\[
+\mathrm{MISE} =
+\frac{1}{N}\sum_{i=1}^{N}\int_{a \in \mathcal{A}}
+(\hat{Y}_i(a) - Y_i(a))^2 \, da .
+\]
+\textbf{Absolute ADRF Error} ($\mathrm{ADRF}_{\text{error}}$) evaluates the estimation error of the population-level average dose–response function:
+\[
+\mathrm{ADRF}_{\text{error}} = |\widehat{\mathrm{ADRF}} - \mathrm{ADRF}|.
+\]
+
+\textbf{FDR} quantifies the proportion of incorrectly selected variables:
+\[
+\mathrm{FDR} = \frac{\mathrm{FP}}{\mathrm{FP} + \mathrm{TP}},
+\]
+\textbf{TPR} quantifies the proportion of correctly selected variables:
+\[
+\mathrm{TPR} = \frac{\mathrm{TP}}{\mathrm{FN} + \mathrm{TP}},
+\]
+where $\mathrm{FP}$, $\mathrm{FN}$  $\mathrm{TP}$ denote the numbers of false positives, false negatives and true positives, respectively.
+
+\subsection{Evaluation on Fully Synthetic Data}
+
+We first evaluate the proposed model on \textit{fully synthetic} datasets, where the complete data-generating mechanism---including covariates, treatment assignment, and outcome generation---is known. 
+Because the ground-truth causal effects are available in this setting, both treatment effect estimation and variable selection performance can be evaluated quantitatively.
+
+\paragraph{Data Generation}
+For each sample, covariates $X \in \mathbb{R}^{100}$ are drawn from a standard multivariate Gaussian distribution. 
+Among them, $\{X_1,\ldots,X_5\}$ are designated as confounders, $\{X_6,\ldots,X_{10}\}$ as outcome predictors, $\{X_{11},\ldots,X_{15}\}$ as instrumental variables, and $\{X_{16},\ldots,X_{100}\}$ as noise variables.
+
+Two coefficient vectors, $c_t$ and $c_o$, are defined to generate the treatment and outcome variables, respectively. 
+If a covariate is causally related to the treatment or outcome, the corresponding coefficient is uniformly sampled from the interval $[0.5, 1.0]$; otherwise, it is set to $0$. 
+For example, a confounder $X_3$ has $c_3^t, c_3^o \sim \mathcal{U}(0.5, 1.0)$, whereas an outcome predictor $X_7$ has $c_7^t = 0$ and $c_7^o \sim \mathcal{U}(0.5, 1.0)$.
+
+The treatment variable is generated by applying min-max normalization to the linear combination of covariates and added noise:
+$$a = \frac{a^* - \min(a^*)}{\max(a^*) - \min(a^*)}$$ $$ where \quad a^* = \sum_{d=1}^{100} c_d^t X_d + \epsilon_t, \quad \epsilon_t \sim \mathcal{N}(0, 0.1^2).$$
+
+To rigorously evaluate the model's capacity to estimate complex, non-linear continuous treatment effects, the outcome $Y_a$ is generated utilizing a non-linear dose-response function:
+$$Y_a = \sum_{d=1}^{100} c_d^o X_d + 4 \left( \frac{a^2}{0.8^2 + a^2} \right) + \epsilon_y, \quad \epsilon_y \sim \mathcal{N}(0, 0.1^2).$$
+Here, the base outcome is defined by the linear combination of the valid covariates, while the treatment effect follows a rational (Hill-type) curve with a maximum multiplier of $4$.
+
+For evaluation, we generate datasets containing $N=2000$ samples and repeat the experiment $10$ times to obtain stable performance estimates.
+
+\begin{table*}
+\centering
+
+\begin{tabular}{lcccccccl}
+\toprule
+ & \multicolumn{2}{c}{In-sample} & \multicolumn{2}{c}{Out-of-sample} & \multicolumn{3}{c}{Variable Selection} & \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-8}
+Model & MISE & $\epsilon_{\text{ADRF}}$ & MISE & $\epsilon_{\text{ADRF}}$ & FDR$_c$ & FDR$_p$ & FDR  &TPR\\
+\midrule
+Base& 2.4543& 0.8015& 2.4873& 0.8137& -- & -- & -- &-- 
+\\
+ LDML& 1.5130& 0.4438&  1.5543& 0.4674& -- & -- &-- &-- 
+\\
+ LRL    & 0.9114& 0.8016& 0.9088& 0.8024& -- & -- &-- &-- 
+\\
+CFDML  & 0.5578& 0.4382& 0.5412& 0.4432& -- & -- & -- &-- 
+\\
+DRNet& 4.4276&  0.2289& 3.8999& 0.2453& -- & -- & -- &-- 
+\\
+SCIGAN & 0.6718& 0.5780& 0.6844& 0.5701& -- & -- & -- &-- 
+\\
+VCNet  & 4.3134& 0.6813& 4.3307& 0.6565& -- & -- & -- &-- \\ 
+\rowcolor{blue!10}
+\textbf{CVSCEN}& 0.1680& 0.1160& 0.1665& 0.1157& 0.0000& 0.0167& 0.0000 &1.0000\\
+\bottomrule
+\end{tabular}
+\caption{Results on the fully synthetic dataset. 
+FDR$_c$ and FDR$_p$ denote the false discovery rates for confounders and outcome predictors, respectively, FDR denotes the overall false discovery rate, and TPR denotes the overall true discovery rate for the selected predictive variables. 
+Bold numbers indicate the best results for each metric. 
+``--'' indicates that the corresponding method does not perform variable selection.}
+\end{table*}
+\begin{figure*}[t]
+    \centering
+
+    % Row 1
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/base_synt.png}
+        \subcaption{Base}
+        \label{fig:adrf_base}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/ldml_synt.png}
+        \subcaption{LDML}
+        \label{fig:adrf_ldml}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/lrl_synt.png}
+        \subcaption{LRL}
+        \label{fig:adrf_lrl}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/cfdml_synt.png}
+        \subcaption{CFDML}
+        \label{fig:adrf_cfdml}
+    \end{minipage}
+
+    \vspace{0.5em}
+
+    % Row 2
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/drnet_synt.png}
+        \subcaption{DRNet}
+        \label{fig:adrf_drnet}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/scigan_synt.png}
+        \subcaption{SCIGAN}
+        \label{fig:adrf_scigan}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/vcnet_synt.png}
+        \subcaption{VCNet}
+        \label{fig:adrf_vcnet}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/cvscen_synt.png}
+        \subcaption{CVSCEN}
+        \label{fig:adrf_cvscen}
+    \end{minipage}
+
+    \caption{Average Dose-Response Function (ADRF) estimated by each model on the synthetic dataset.
+    The dashed black line denotes the true ADRF, and the solid red line denotes the predicted ADRF.
+    The shaded region indicates the gap between the two.}
+    \label{fig:adrf_all}
+\end{figure*}
+
+\paragraph{Experimental Results}
+Table~1 summarizes the comparison of treatment effect estimation and variable selection performance between CVSCEN and the baselines on the fully synthetic dataset. 
+
+CVSCEN achieves the best treatment effect estimation performance, significantly outperforming all baseline methods in terms of both MISE and $\epsilon_{\text{ADRF}}$. As visually demonstrated in Figure~\ref{fig:adrf_all}, CVSCEN closely tracks the highly non-linear true ADRF curve with minimal error. This substantial improvement is primarily attributed to its ability to perform causal variable selection, which enables the model to accurately filter out irrelevant and instrumental variables even when the number of noise variables is large. 
+
+In contrast, deep learning baselines such as DRNet and VCNet, originally designed for Average Dose-Response Function (ADRF) estimation, show relatively competitive $\epsilon_{\text{ADRF}}$ scores. However, they suffer from exceptionally high MISE values (exceeding $4.3$). Since these models lack a built-in variable selection mechanism, they are highly susceptible to the high-dimensional noise and instrumental variables present in the dataset, which degrades their individual-level prediction accuracy. Furthermore, SCIGAN shows suboptimal performance because its GAN-based generative framework, originally designed for large-scale datasets, struggles to fully converge on the reduced scale of our synthetic data.
+
+Among the traditional and double machine learning baselines, CFDML shows the most competitive performance (MISE of $0.5578$) by effectively handling non-linearities. Conversely, LRL yields exceptionally high estimation errors and produces a completely flat prediction curve, as observed in Figure~\ref{fig:adrf_all}. This failure occurs because the $L_1$ regularization in Lasso overly penalizes the treatment variable due to its strong correlation with the covariates, effectively shrinking the causal effect coefficient to zero. This clearly demonstrates that naive feature selection algorithms are fundamentally unsuitable for causal inference tasks. Nevertheless, all these baselines ultimately fall short of CVSCEN, highlighting the distinct advantage of our framework that jointly optimizes causal representation and variable selection.
+
+For variable selection, CVSCEN---being the only evaluated method capable of feature selection in continuous treatment settings---demonstrates near-perfect identification performance. It achieves an overall True Positive Rate (TPR) of $1.0000$ and an overall False Discovery Rate (FDR) of $0.0000$, with a confounder FDR ($\text{FDR}_c$) of $0.0000$ and an outcome predictor FDR ($\text{FDR}_p$) of only $0.0167$. This strongly indicates that the model flawlessly identifies the underlying causal variables without falsely including spurious ones, fundamentally driving its superior robustness and accuracy in treatment effect estimation.
+
+\subsection{Evaluation on Semi-Synthetic Data}
+
+In the semi-synthetic data experiment, we followed a similar procedure to the fully synthetic setting, where the treatment, coefficients, and outcome were generated artificially to control the ground-truth causal effects. However, the covariates used as model inputs were extracted from real-world data to better reflect the complexity of practical scenarios. Specifically, we used the Infant Health and Development Program (IHDP) dataset \cite{hill2011bayesian} as the source of covariates.
+
+The IHDP dataset contains real-world demographic and clinical covariates collected from a randomized study evaluating the impact of educational and family support services on low-birth-weight, premature infants. It consists of a heterogeneous mix of continuous and binary variables with inherent, natural correlation structures. Such characteristics make it a highly suitable and widely recognized benchmark for evaluating the effectiveness and robustness of the proposed causal variable selection mechanism in realistic, non-idealized continuous treatment settings.
+
+
+\paragraph{Data Generation.}
+In this semi-synthetic experiment, we extract real-world covariates $X \in \mathbb{R}^{25}$ from the Infant Health and Development Program (IHDP) dataset. To ensure a rigorous and fair benchmark against existing state-of-the-art models, we adopt the complex, non-linear data-generating process established in the VCNet study \cite{nie2021vcnet}. Under this setting, the 25 normalized covariates are partitioned into three distinct causal roles: shared confounders $v$ (indices 1, 2, 3, 5, 6), outcome predictors $u$ (indices 4, 7--15), and instrumental variables $w$ (indices 16--25).
+
+The continuous treatment $a$ is generated by applying a sigmoid link function to a highly non-linear combination of confounders and instrumental variables:
+\begin{equation}
+    a = \frac{1}{1 + \exp(-2 \cdot \ell_a)},
+\end{equation}
+where the logit $\ell_a$ is defined as:
+\begin{multline}
+\ell_a = \frac{x_1}{1 + x_2} + \frac{\max(x_3, x_4, x_5)}{0.2 + \min(x_3, x_4, x_5)} \\
++ \tanh(5 \cdot (\bar{X}_w - \mu_w)) - 2.0 + \eta
+\end{multline}
+Here, $\mathbf{x}_{i}$ refers to the $i$-th covariate, $\bar{X}_{w}$ is the mean of the instrumental variables, $\mu_{w}$ is their population mean, and $\eta \sim \mathcal{N}(0, 0.5^2)$ represents the treatment assignment noise.
+
+The outcome $Y$ is generated through a dose-response function that exhibits significant fluctuations, interacting with the outcome-predictive variable group:
+\begin{multline}
+Y = \frac{\sin(3\pi a)}{1.2 - a} \Bigg( 1.5 \cdot \tanh(5 \cdot (\bar{X}_u - \mu_u)) \\
++ \frac{0.5 \cdot \exp(0.2(x_1 - x_5))}{0.1 + \min(x_2, x_3, x_4)} \Bigg)
+\end{multline}
+where $\bar{X}_{u}$ is the mean of the outcome predictors, $\mu_{u}$ is their population mean, and $\epsilon \sim \mathcal{N}(0, 0.5^2)$ is the outcome noise. 
+
+This intricate design, incorporating trigonometric, exponential, and fractional terms, ensures that the estimation task is extremely challenging. By adopting this established but difficult configuration, we provide a transparent and standardized environment to evaluate whether the proposed variable selection layer can robustly isolate true causal signals and prevent performance degradation caused by complex non-linear confounding.
+
+\begin{table*}
+\centering
+\caption{Results on the semi-synthetic IHDP dataset.}
+\begin{tabular}{lcccccccl}
+\toprule
+ & \multicolumn{2}{c}{In-sample} & \multicolumn{2}{c}{Out-of-sample} & \multicolumn{3}{c}{Variable Selection} & \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-8}
+Model & MISE & $\epsilon_{\text{ADRF}}$ & MISE & $\epsilon_{\text{ADRF}}$ & FDR$_c$ & FDR$_p$ & FDR  &TPR\\
+\midrule
+Base& 2.7140& 2.3562& 2.6943& 2.3618& -- & -- & -- &-- 
+\\
+ LDML& 3.5001& 2.3696& 3.6271& 2.4464& -- & -- &-- &-- 
+\\
+ LRL    & 2.5362& 2.1918& 2.5295& 2.1829& -- & -- &-- &-- 
+\\
+CFDML  & 3.0096& 2.3672& 2.9922& 2.3343& -- & -- & -- &-- 
+\\
+DRNet& 2.3971& 0.5759& 2.4217
+& 0.6389& -- & -- & -- &-- 
+\\
+SCIGAN & 2.3826& 1.5649& 2.3295& 1.5636& -- & -- & -- &-- 
+\\
+VCNet  & 1.5170& 0.2808& 1.5091& 0.2990  
+& -- & -- & -- &-- \\ 
+\rowcolor{blue!10}
+\textbf{CVSCEN} & 1.0264& 0.3512& 1.0188& 0.3359&  0.1000& 0.4285& 0.3172&0.9800\\
+\bottomrule
+\end{tabular}
+\end{table*}
+\begin{figure*}[t]
+    \centering
+
+    % Row 1
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/base_ihdp.png}
+        \subcaption{Base}
+        \label{fig:adrf_base}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/ldml_ihdp.png}
+        \subcaption{LDML}
+        \label{fig:adrf_ldml}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/lrl_ihdp.png}
+        \subcaption{LRL}
+        \label{fig:adrf_lrl}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/cfdml_ihdp.png}
+        \subcaption{CFDML}
+        \label{fig:adrf_cfdml}
+    \end{minipage}
+
+    \vspace{0.5em}
+
+    % Row 2
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/drnet_ihdp.png}
+        \subcaption{DRNet}
+        \label{fig:adrf_drnet}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/scigan_ihdp.png}
+        \subcaption{SCIGAN}
+        \label{fig:adrf_scigan}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/vcnet_ihdp.png}
+        \subcaption{VCNet}
+        \label{fig:adrf_vcnet}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[b]{0.24\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/cvscen_ihdp.png}
+        \subcaption{CVSCEN}
+        \label{fig:adrf_cvscen}
+    \end{minipage}
+
+    \caption{Average Dose-Response Function (ADRF) estimated by each model on the IHDP dataset.}
+    \label{fig:adrf_all}
+\end{figure*}
+\textbf{Experimental Results.} Table 3 presents the performance comparison on the semi-synthetic dataset constructed from the IHDP data. Similar to the fully synthetic experiments, the proposed method, CVSCEN, achieves the state-of-the-art performance in terms of MISE, demonstrating its superior ability to accurately estimate the individual-level dose-response function even under complex multicollinearity structures. Specifically, CVSCEN achieves an out-of-sample MISE of 1.0188, significantly outperforming the best baseline, VCNet (1.5091).
+
+In terms of the population-level error metric $\epsilon_{\text{ADRF}}$, CVSCEN achieves highly competitive performance (0.3359), performing on par with the best-performing modern deep learning architecture, VCNet (0.2990). Traditional linear approaches (e.g., LRL and CFDML) exhibit inferior performance due to their reliance on linear assumptions, limiting their ability to capture nonlinear causal relationships in high-dimensional covariates. Deep learning-based methods (e.g., DRNet, SCIGAN, and VCNet) substantially reduce estimation errors by learning nonlinear relationships. However, because these models indiscriminately use all observed variables as predictive features, they remain vulnerable to interference from irrelevant noise variables.
+
+In contrast, CVSCEN incorporates a causal structure-based variable separation mechanism that filters out irrelevant variables during training. As a result, CVSCEN successfully identifies true causal variables, achieving an impressive TPR of 0.9800 with a reasonable overall FDR of 0.3172. These results suggest that by optimizing primarily for accurate individual-level effect estimation (MISE), the proposed model can robustly identify truly causal variables and achieve precise treatment effect estimation in complex environments with realistic covariates.
+
+%An additional advantage of the proposed method is its variable selection capability. Due to the complex correlation structure among covariates in IHDP data, the false discovery rates for confounders ($\text{FDR}_c$) and outcome predictors ($\text{FDR}_p$) increase slightly compared to the fully synthetic setting. Nevertheless, the overall false discovery rate for the combined predictive variable set remains low at 0.0982. 
+
+% (기존) The core advantage of CVSCEN lies in its capability for causal variable selection. CVSCEN achieves an FDR$_c$ of 0.3713 and an FDR$_p$ of 0.3590, which are higher than those observed in the fully synthetic setting, reflecting the complex correlation structure among covariates in the IHDP data. 
+%(수정) However, the overall false discovery rate (FDR) for the combined predictive variable set remains low at 0.0982, indicating that CVSCEN can still robustly identify the relevant predictive variables in this scenario. 
+%Due to the complex correlation structure among covariates in IHDP data, the false discovery rates for confounders ($\text{FDR}_c$) and outcome predictors ($\text{FDR}_p$) increase slightly compared to the fully synthetic setting. Nevertheless, the overall false discovery rate for the combined predictive variable set remains low at 0.0982.
+
+These results suggest that the proposed model can robustly identify truly causal variables even in high-dimensional real-world biomedical datasets. Overall, CVSCEN successfully achieves both accurate variable selection and precise treatment effect estimation in complex environments with realistic covariates.
+
+
+\section{Conclusion}
+
+\textbf{Summary.} In this work, we proposed CVSCEN, an end-to-end differentiable framework that jointly performs continuous treatment effect estimation and causal variable selection. By incorporating a Pearson correlation-based guidance term and a gradient reversal layer, CVSCEN effectively isolates confounders and outcome predictors from high-dimensional observational data. Driven by the primary objective of minimizing the individual-level estimation error (MISE), our empirical evaluations on both fully synthetic and semi-synthetic (IHDP) benchmarks demonstrate that CVSCEN achieves state-of-the-art MISE performance. Furthermore, it reliably identifies true causal variables, maintaining high True Positive Rates while filtering out irrelevant noise, even in complex nonlinear environments.
+
+\textbf{Limitations and Future Directions.} Despite these promising results, several limitations remain. First, the confounder identification mechanism relies on Pearson correlation, which may be less effective when underlying relationships are strongly nonlinear. Second, the framework assumes a specific causal structure and does not provide formal identifiability guarantees in the presence of unobserved confounding or selection bias. Finally, when a small number of dominant confounders exist, the normalization mechanism may bias the model toward selecting only a subset of influential variables. Future work will focus on extending the method to capture complex non-linear dependencies in variable selection, as well as generalizing the framework to accommodate time-varying treatments and multiple treatment regimes.
+
+\bibliography{cvscen.bib}
+\bibliographystyle{icml2026}
+
+\newpage
+\onecolumn
+\definecolor{darkblue}{rgb}{0.0, 0.1, 0.5}
+\newpage
+\appendix
+
+\begin{center}
+  {\fontsize{16pt}{18pt}\selectfont\bfseries\color{darkblue} Appendix for the Paper} \\[0.6em]
+  {\fontsize{14pt}{16pt}\selectfont \color{darkblue} ``Adaptive Variable Selection for Continuous Treatment Effect Estimation'} \\[1.5em]
+\end{center}
+
+\section{Notations}
+\begin{table}[h!]
+\centering
+\begin{tabular}{|c|l|}
+\hline
+\textbf{Notation} & \textbf{Description} \\ \hline
+\( A \) & Continuous treatment variable. \\ \hline
+\( Y \) & Outcome variable. \\ \hline
+\( X = (X_1, X_2, \dots, X_d) \) & Covariate vector (with \( d \) dimensions). \\ \hline
+\( Y_i(a) \) & Potential outcome for unit \( i \) under treatment level \( a \). \\ \hline
+\( \text{DRF}_i(a) \) & Individual-level dose-response function. \\ \hline
+\( \text{CADRF}(a, x) = \mathbb{E}[Y(a) | X = x] \) & Conditional average dose-response function. \\ \hline
+\( \text{ADRF}(a) \) & Average dose-response function at the population level. \\ \hline
+\( \alpha_{j,k} \) & Probability for covariate \( X_j \) being assigned to role \( k \) (confounder, outcome predictor, or noise). \\ \hline
+\( \rho_j \) & HSIC between \( X_j \) and treatment \( A \),\\ \hline
+%used to guide the selection of confounders. \\ \hline
+\end{tabular}
+\caption{Notations and Key Terms}
+\end{table}
+
+\section{Additional Explanations about the Experiments}
+\paragraph{Datasets.}
+The Infant Health and Development Program (IHDP) dataset \cite{hill2011bayesian} is widely utilized as a standard benchmark in causal inference to evaluate treatment effect estimation algorithms. Originally collected from a randomized study targeting low-birth-weight and premature infants, the dataset provides a rich set of real-world covariates. 
+
+Specifically, we use 25 covariates for each subject, encompassing both child characteristics (e.g., birth weight, head circumference) and maternal attributes (e.g., maternal age, education level, and behaviors during pregnancy). Among the 25 covariates, 6 are continuous and 19 are binary. To ensure stable model training, the continuous covariates are standardized to have zero mean and unit variance, while the binary covariates are retained in their original $\{0, 1\}$ format.
+
+While the IHDP dataset is traditionally used for binary treatment settings, we adapt it for our continuous treatment semi-synthetic experiment. We detach the original treatment and outcome variables, retaining only the 25-dimensional real-world covariate matrix $X \in \mathbb{R}^{25}$. These covariates exhibit inherent, natural correlation structures and complex multicollinearity. By systematically partitioning these real-world covariates into distinct causal roles—confounders, outcome predictors, and instrumental variables—we construct a highly challenging and realistic environment to validate the model's capacity to estimate simultaneous continuous treatment effects and select causal variables.
+
+\paragraph{Baselines.}
+We compare the proposed method with representative baselines.
+\begin{itemize}
+    \item LR Lasso (LRL) \cite{tibshirani1996regression}: A linear regression model incorporating $L_1$ regularization for feature selection, used here as a baseline for linear causal estimation. 
+    \item CFDML (Causal Forest Double Machine Learning) \cite{chernozhukov2018double, athey2019generalized}: A non-parametric framework combining double machine learning with causal forests to flexibly estimate heterogeneous treatment effects while mitigating confounding biases.
+    \item LDML (Linear Double Machine Learning) \cite{chernozhukov2018double}: A double machine learning baseline that assumes a linear treatment effect, utilizing arbitrary machine learning models to partial out high-dimensional nuisance parameters (confounders).
+    \item DRNet (Dose Response Network) \cite{schwab2020learning}: A deep learning architecture designed for continuous treatments that   partitions the dosage range into multiple strata and learns separate head networks to estimate the individual dose-response function.
+    \item SCIGAN \cite{bica2020estimating}: A generative framework that utilizes Generative Adversarial Networks (GANs) to predict counterfactual outcomes for continuous-valued interventions. 
+    \item VCNet (Variable Coefficient Network) \cite{nie2021vcnet}: A model for continuous treatments that uses varying coefficient layers to approximate the dose-response function. 
+    \item CVSCEN (Ours): Our proposed end-to-end framework that simultaneously performs causal role-aware variable selection and continuous treatment effect estimation. 
+\end{itemize}
+
+\paragraph{Implementation Details\\\\}
+
+\textbf{Network Architecture }The CVSCEN framework is implemented as an end-to-end neural network consisting of three functional modules, with a default hidden layer dimension of a multiple of 128 across the main predictive paths.
+
+\begin{itemize}
+    \item \textbf{Dynamic Variable Selection Layer}  This layer maintains a learnable logit matrix of size $d \times 3$, where $d$ is the number of input covariates. During training, it produces continuous masks $M \in [0, 1]^d$ to ensure stable gradient flow, while switching to discrete one-hot selections $M \in \{0, 1\}^d$ during test via argmax. Temperature $\tau$ anneals from 10.0 to 0.1.
+    
+    \item \textbf{Treatment Anti-Prediction Layer}  Structured as a multi-layer perceptron (MLP) following a Gradient Reversal Layer (GRL). It receives the $d$-dimensional masked outcome predictors $u$ as input. The architecture consists of three linear transformations with two hidden layers. ELU activation functions are applied between the hidden layers to model nonlinear dependencies. The final linear layer maps the hidden representation to a 1-dimensional scalar output, which represents the predicted continuous treatment $\hat{a}_{anti}$.
+    
+    \item \textbf{Outcome Prediction Layer} receives the $d$-dimensional combined masked covariates – $(u, v)$ – and the 1-dimensional observed continuous treatment as inputs. Its internal architecture utilizes a dual-stream encoding strategy, consisting of two separate multi-layer perceptrons (MLPs) for the covariates and the treatment. Each MLP is structured with three linear transformations, which include two hidden layers of a specified dimension, with activation functions ELU applied between them. After this independent encoding, the two resulting representations are merged through element-wise multiplication. A final linear transformation then maps this combined representation to a 1-dimensional scalar output.
+\end{itemize}
+
+\textbf{Hyperparameters} To ensure a fair comparison and optimal performance, we systematically tuned the hyperparameters for both our proposed model and the baseline methods. The search space included fundamental optimization parameters such as the learning rate and the total number of training epochs. For the objective function, we fine-tuned the weight parameters (e.g., $c_i$, and the imbalance parameter for CF) to properly balance the trade-offs among the different loss components. Furthermore, we treated the architectural configurations as hyperparameters, specifically searching for the optimal correlation point $\tau$ used for guidance. The complete grid search ranges for all evaluated hyperparameters are summarized in Table 1.
+\begin{table}[htbp]
+\centering
+\caption{Hyperparameters and ranges}
+\begin{tabular}{ll}
+\hline
+Parameters & Ranges \\
+\hline
+Learning rate& $\{0.1, 0.01, 0.001, 0.0001\}$ \\
+Number of epochs & $\{300, 500, 1000, 1500\}$ \\
+Weight parameter& $\{0.1, 0.25, 0.5, 0.75, 1, 1.5, 3\}$\\
+Correlation point $\tau$ & $\{0.5, 0.7, 0.9\}$ \\ \bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Training Details} All experiments and models were implemented using the PyTorch framework. The network parameters were optimized using the Adam optimizer to minimize the combined objective function. For robust evaluation, the datasets were randomly partitioned into training, validation, and test sets (63:27:10). The training set was used to update the model weights, while the validation set was utilized for hyperparameter tuning and selecting the best-performing model checkpoint to prevent overfitting. The final performance of the causal effect estimation was evaluated exclusively on the held-out test set.
+\end{document}
