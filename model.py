@@ -35,6 +35,8 @@ class VSLayer(BaseModule):
     def __init__(self, info, hparams):
         super().__init__(info, hparams)
 
+        self.temp_start = 10.0
+        self.temp_end = 0.1
         self.logits = torch.nn.Parameter(torch.zeros((self.dim_x, 3), device=self.device))
         self.HSIC_xa = torch.tanh(1.0 * (self.HSIC_xa - self.HSIC_xa.mean()) / self.HSIC_xa.std()).to(self.device)
         self.HSIC = torch.zeros_like(self.logits, device = self.device)
@@ -75,14 +77,22 @@ class ResidualBlock(nn.Module):
 class POLayer(BaseModule):
     def __init__(self, info, hparams):
         super().__init__(info, hparams)
+        self.L_pe = 3
+        self.num_layers = 2
 
         self.dim_a_expanded = 1 + 2 * self.L_pe  # [a, sin(2^0*pi*a), cos(2^0*pi*a), ..., sin(2^(L_pe-1)*pi*a), cos(2^(L_pe-1)*pi*a)]
 
-        fe_layers = [torch.nn.Linear(self.dim_x, self.dim_layer)]
+        # Decoupled feature extractors
+        fe_c_layers = [torch.nn.Linear(self.dim_x, self.dim_layer)]
         for _ in range(getattr(self, 'num_layers', 2)):
-            fe_layers.append(ResidualBlock(self.dim_layer))
-        self.fe = torch.nn.Sequential(*fe_layers)
-        
+            fe_c_layers.append(ResidualBlock(self.dim_layer))
+        self.fe_c = torch.nn.Sequential(*fe_c_layers)
+
+        fe_p_layers = [torch.nn.Linear(self.dim_x, self.dim_layer)]
+        for _ in range(getattr(self, 'num_layers', 2)):
+            fe_p_layers.append(ResidualBlock(self.dim_layer))
+        self.fe_p = torch.nn.Sequential(*fe_p_layers)
+
         self.ce_gamma = torch.nn.Sequential(
             torch.nn.Linear(self.dim_a_expanded, self.dim_layer),
             torch.nn.SiLU(),
@@ -106,10 +116,17 @@ class POLayer(BaseModule):
             encoding.append(torch.cos((2 ** k) * np.pi * a))
         return torch.cat(encoding, dim=-1)
     
-    def forward(self, uv, a):
+    def forward(self, x_c, x_p, a):
         a_expanded = self.expand_a(a)
-        y_star_hat = self.pr(self.fe(uv) * (1 + self.ce_gamma(a_expanded)) + self.ce_beta(a_expanded))
+        
+        rep_c = self.fe_c(x_c)
+        rep_p = self.fe_p(x_p)
+        
+        # Confounders are modulated by A, prognostics are strictly independent of A
+        phi_c = rep_c * (1 + self.ce_gamma(a_expanded)) + self.ce_beta(a_expanded)
+        phi_total = phi_c + rep_p
 
+        y_star_hat = self.pr(phi_total)
         return y_star_hat
     
 class MainModel(BaseModule):
@@ -117,11 +134,11 @@ class MainModel(BaseModule):
         super().__init__(info, hparams)
 
     def forward(self, x, a, epoch):
-        m_u, m_v = self.vsl(epoch)
-        u, v = x * m_u, x * m_v
-        y_star_hat = self.pol(u + v, a)
+        m_c, m_p = self.vsl(epoch)
+        x_c, x_p = x * m_c, x * m_p
+        y_star_hat = self.pol(x_c, x_p, a)
 
-        return y_star_hat, u, m_u, m_v
+        return y_star_hat, x_c, x_p, m_c, m_p
     
 def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loader_train, loader_val, coef_loss):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -142,15 +159,15 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
             optimizer_s.zero_grad()
             optimizer_p.zero_grad()
             x, a, yf = x.to(device), a.to(device), yf.to(device)
-            y_star_hat, u, m_u, m_v = model(x, a, epoch)
+            y_star_hat, x_c, x_p, m_c, m_p = model(x, a, epoch)
 
             loss_y = F.smooth_l1_loss(y_star_hat, yf, beta=1.0)
             
-            # Use HSIC to penalize dependency between Outcome-Predictors (u) and Treatment (a)
+            # Use HSIC to penalize dependency between Prognostic predictors (x_p) and Treatment (a)
             # a is safely reshaped to 2D (batch_size, 1) for HSIC
-            loss_hsic_val = hsic_loss(u, a.view(-1, 1), sigma_x=1.0, sigma_y=1.0)
+            loss_hsic_val = hsic_loss(x_p, a.view(-1, 1), sigma_x=1.0, sigma_y=1.0)
             
-            loss = coef_loss[0] * loss_y + coef_loss[1] * loss_hsic_val + coef_loss[2] * m_u.mean() + coef_loss[3] * m_v.mean()
+            loss = loss_y + coef_loss[0] * loss_hsic_val + coef_loss[1] * m_c.mean() + coef_loss[2] * m_p.mean()
 
 
             loss.backward()
@@ -167,11 +184,11 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
         with torch.no_grad():
             for x, a, yf in loader_val:
                 x, a, yf = x.to(device), a.to(device), yf.to(device)
-                y_star_hat, u, m_u, m_v = model(x, a, epoch)
+                y_star_hat, x_c, x_p, m_c, m_p = model(x, a, epoch)
                 
                 loss_y = F.smooth_l1_loss(y_star_hat, yf, beta=1.0)
-                loss_hsic_val = hsic_loss(u, a.view(-1, 1), sigma_x=1.0, sigma_y=1.0)
-                loss = coef_loss[0] * loss_y + coef_loss[1] * loss_hsic_val + coef_loss[2] * m_u.mean() + coef_loss[3] * m_v.mean()
+                loss_hsic_val = hsic_loss(x_p, a.view(-1, 1), sigma_x=1.0, sigma_y=1.0)
+                loss = loss_y + coef_loss[0] * loss_hsic_val + coef_loss[1] * m_c.mean() + coef_loss[2] * m_p.mean()
 
                 loss_val_y.append(loss_y.item())
                 loss_val_hsic.append(loss_hsic_val.item())
@@ -197,8 +214,9 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
     plt.legend()
     plt.grid(True)
     plt.savefig('./result/learning_curve.png')
+    plt.close()
 
-    return model
+    return model, history_train_y, history_val_y
 
 import numpy as np
 import torch
@@ -212,25 +230,28 @@ def evaluate(model, loader_test, coefs, dataset_type='ihdp', step=100):
     model.eval()
 
     with torch.no_grad():
+        all_a = torch.cat([a for _, a, _ in loader_test]).cpu().numpy()
+        t_min, t_max = np.percentile(all_a, 5), np.percentile(all_a, 95)
+
         total_mise = 0.0 
         total_samples = 0
-        c_u = np.zeros(model.vsl.dim_x, dtype=int)
-        c_v = np.zeros(model.vsl.dim_x, dtype=int)
-        c_uv = np.zeros(model.vsl.dim_x, dtype=int)
+        c_c = np.zeros(model.vsl.dim_x, dtype=int)
+        c_p = np.zeros(model.vsl.dim_x, dtype=int)
+        c_cp = np.zeros(model.vsl.dim_x, dtype=int)
         
         all_pred_curves = []
         all_fact_curves = []
         
         for x, a, yf in loader_test:
             x, a, yf = x.to(device), a.to(device), yf.to(device)
-            y_star_hat, u, m_u, m_v = model(x, a, epoch=model.epoch_total)
-            uv = (x * m_u + x * m_v)   
+            y_star_hat, x_c, x_p, m_c, m_p = model(x, a, epoch=model.epoch_total)
+            uv = (x * m_c + x * m_p)   
 
             grid_size = 2 ** 6 + 1
-            dx = 1. / (grid_size - 1)
-            treat_grid = torch.linspace(np.finfo(float).eps, 1, grid_size, device=device)
+            dx = (t_max - t_min) / (grid_size - 1)
+            treat_grid = torch.linspace(t_min, t_max, grid_size, device=device)
 
-            pred_grid = torch.cat([model.pol(uv, treat.expand_as(a)) for treat in treat_grid], dim=1)
+            pred_grid = torch.cat([model.pol(x_c, x_p, treat.expand_as(a)) for treat in treat_grid], dim=1)
             if dataset_type == 'ihdp':
                 fact_grid = torch.cat([torch.tensor(data.get_effect_ihdp(uv.cpu().numpy(), treat.item(), coefs), dtype=torch.float32).unsqueeze(1).to(device) for treat in treat_grid], dim=1)
             else:
@@ -245,25 +266,25 @@ def evaluate(model, loader_test, coefs, dataset_type='ihdp', step=100):
             all_fact_curves.append(fact_grid.cpu())
 
         fdr = [
-            utils.FDR(m_u, coef_a, coef_y, is_confounder=True), 
-            utils.FDR(m_v, coef_a, coef_y, is_confounder=False), 
-            utils.FDR(m_u + m_v, coef_a + coef_y, coef_y + coef_y, is_confounder=True)
+            utils.FDR(m_c, coef_a, coef_y, is_confounder=True), 
+            utils.FDR(m_p, coef_a, coef_y, is_confounder=False), 
+            utils.FDR(m_c + m_p, coef_a + coef_y, coef_y + coef_y, is_confounder=True)
         ]
 
         tpr = [
-            utils.TPR(m_u, coef_a, coef_y, is_confounder=True), 
-            utils.TPR(m_v, coef_a, coef_y, is_confounder=False), 
-            utils.TPR(m_u + m_v, coef_a + coef_y, coef_y + coef_y, is_confounder=True)
+            utils.TPR(m_c, coef_a, coef_y, is_confounder=True), 
+            utils.TPR(m_p, coef_a, coef_y, is_confounder=False), 
+            utils.TPR(m_c + m_p, coef_a + coef_y, coef_y + coef_y, is_confounder=True)
         ]
         
-        if m_v.dim() > 1:
-            c_v += m_v.bool().sum(dim=0).cpu().numpy().astype(int)
-            c_u += m_u.bool().sum(dim=0).cpu().numpy().astype(int)
-            c_uv += (m_u.bool() | m_v.bool()).sum(dim=0).cpu().numpy().astype(int)
+        if m_p.dim() > 1:
+            c_p += m_p.bool().sum(dim=0).cpu().numpy().astype(int)
+            c_c += m_c.bool().sum(dim=0).cpu().numpy().astype(int)
+            c_cp += (m_c.bool() | m_p.bool()).sum(dim=0).cpu().numpy().astype(int)
         else:
-            c_v += m_v.bool().cpu().numpy().astype(int)
-            c_u += m_u.bool().cpu().numpy().astype(int)
-            c_uv += (m_u.bool() | m_v.bool()).cpu().numpy().astype(int)
+            c_p += m_p.bool().cpu().numpy().astype(int)
+            c_c += m_c.bool().cpu().numpy().astype(int)
+            c_cp += (m_c.bool() | m_p.bool()).cpu().numpy().astype(int)
 
         avg_pred = torch.cat(all_pred_curves, dim=0).mean(dim=0).numpy()
         avg_fact = torch.cat(all_fact_curves, dim=0).mean(dim=0).numpy()
@@ -274,4 +295,4 @@ def evaluate(model, loader_test, coefs, dataset_type='ihdp', step=100):
         t_axis = treat_grid.cpu().numpy()
 
 
-    return np.sqrt(mise), np.sqrt(adrfe), fdr, tpr, [c_u, c_v, c_uv], [avg_pred, avg_fact, t_axis]
+    return np.sqrt(mise), np.sqrt(adrfe), fdr, tpr, [c_c, c_p, c_cp], [avg_pred, avg_fact, t_axis]

@@ -115,6 +115,7 @@ def plot_curve(axis, a, b, string_a, string_b, file_name, bin_size=100):
     plt.tight_layout()
     plt.legend(fontsize=12)
     plt.savefig('./result/' + file_name + '.png')
+    plt.close()
 
 def plot_drf(t_axis, avg_fact, avg_pred, file_name):
     plt.figure(figsize=(8, 6))
@@ -123,6 +124,7 @@ def plot_drf(t_axis, avg_fact, avg_pred, file_name):
     plt.fill_between(t_axis, avg_fact, avg_pred, color='red', alpha=0.1)
     plt.grid(True, alpha=0.3)
     plt.savefig('./result/' + file_name +'.png')
+    plt.close()
 
 if __name__ == "__main__":
     test = FDR(torch.tensor([0, 0, 0]), torch.tensor([0.5, 0.0, 0.5]), torch.tensor([0.5, 0.5, 0.5]), is_confounder=True)

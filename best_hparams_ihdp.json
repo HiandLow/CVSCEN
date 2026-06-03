@@ -1,0 +1,9 @@
+{
+    "lr_p": 0.0005,
+    "lr_s": 0.005,
+    "epoch_total": 300,
+    "dim_layer": 256,
+    "weight_hsic": 1.0,
+    "coef_loss_c": 0.25,
+    "coef_loss_p": 0.25
+}

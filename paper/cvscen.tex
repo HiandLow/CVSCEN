@@ -436,19 +436,22 @@ We compare the proposed method with representative baselines.
 \item \textbf{Outcome Prediction Layer} receives the combined masked covariates -- $(u, v)$ -- and the 1-dimensional observed continuous treatment as inputs. To effectively capture complex interactions, its internal architecture employs a treatment-conditioned affine modulation strategy rather than a simple independent encoding. First, the continuous treatment is mapped into a 5-dimensional feature space using polynomial and trigonometric expansions. The network then utilizes a set of multi-layer perceptrons (MLPs) equipped with SiLU activation functions: a feature extractor processes the covariates, while two separate parameter networks process the expanded treatment to generate scale ($\gamma$) and shift ($\beta$) vectors. The extracted covariate representation is then dynamically modulated via an element-wise affine transformation using these treatment-derived parameters. Finally, a prediction MLP maps this modulated representation to a 1-dimensional scalar output.
 \end{itemize}
 
-\textbf{Hyperparameters} To ensure a fair comparison and optimal performance, we systematically tuned the hyperparameters for both our proposed model and the baseline methods. The search space included fundamental optimization parameters such as the learning rate and the total number of training epochs. For the objective function, we fine-tuned the weight parameters (e.g., $c_i$, and the imbalance parameter for CF) to properly balance the trade-offs among the different loss components. Furthermore, we treated the architectural configurations as hyperparameters, specifically searching for the optimal correlation point $\tau$ used for guidance. The complete grid search ranges for all evaluated hyperparameters are summarized in Table 1.
+\textbf{Hyperparameters} To ensure a fair comparison and optimal performance, we systematically tuned the hyperparameters for both our proposed model and the baseline methods via Optuna-based Bayesian Optimization. The search space included fundamental optimization parameters such as the learning rates for both prediction and selection subnetworks, and the total number of training epochs (which controls the Gumbel-Softmax temperature annealing schedule). For the objective function, we fine-tuned the HSIC penalty weight ($\lambda_{\text{HSIC}}$) to properly balance causal variable isolation against the factual prediction loss. The complete search space for the primary hyperparameters is summarized in Table 1. We fixed the prediction network's $L_2$ regularization (weight decay) to $10^{-3}$ and batch size to $64$ following standard conventions to reduce the search dimensionality.
 \begin{table}[htbp]
 \centering
-\caption{Hyperparameters and ranges}
+\caption{Hyperparameter Grid Search Space}
 \begin{tabular}{ll}
-\hline
-Parameters & Ranges \\
-\hline
-Learning rate& $\{0.1, 0.01, 0.001, 0.0001\}$ \\
-Number of epochs & $\{300, 500, 1000, 1500\}$ \\
-Weight parameter& $\{0.25, 0.5, 0.75, 1, 1.5, 3\}$\\
- Dimension&$\{64, 128, 256\}$\\
-Correlation point $\tau$ & $\{0.5, 0.7, 0.9\}$ \\ \bottomrule
+\toprule
+Hyperparameter & Search Range \\
+\midrule
+Learning Rate (Prediction) & $\{10^{-4}, 5\times 10^{-4}, 10^{-3}, 5\times 10^{-3}\}$ \\
+Learning Rate (Selection) & $\{10^{-3}, 5\times 10^{-3}, 10^{-2}\}$ \\
+Number of Epochs & $\{300, 400, 500\}$ \\
+Hidden Dimension & $\{32, 64, 128, 256\}$ \\
+HSIC Penalty ($\lambda_{\text{HSIC}}$) & $\{0.5, 1.0, 2.5, 5.0, 10.0\}$ \\ 
+Sparsity Penalty ($u$) & $\{0.1, 0.25, 0.5, 0.75, 1.0\}$ \\
+Sparsity Penalty ($v$) & $\{0.1, 0.25, 0.5, 0.75, 1.0\}$ \\
+\bottomrule
 \end{tabular}
 \end{table}
 
@@ -469,6 +472,8 @@ Following standard practice in treatment effect estimation, we evaluate treatmen
 \[
 \mathrm{ADRF}_{\text{error}} = |\widehat{\mathrm{ADRF}} - \mathrm{ADRF}|.
 \]
+
+\textbf{Evaluation Support Trimming.} In observational studies with continuous treatments, evaluating the model over the entire theoretical domain (e.g., $[0, 1]$) often forces the model to extrapolate into regions with little to no empirical support, severely violating the positivity assumption \citep{petersen2012diagnosing, kennedy2017nonparametric}. To prevent unreliable extrapolation and minimize the variance of the estimators, it is theoretically required to restrict the target estimand to a region of common support \citep{Crump2009DealingWL}. This trimming protocol is widely adopted by recent continuous treatment effect estimation frameworks, which either restrict evaluations to observed extrema \citep{nagalapatti2024continuous} or explicitly trim extreme percentiles \citep{vanremmerden2026continuous}. Following this standard practice, we compute both MISE and $\mathrm{ADRF}_{\text{error}}$ strictly within the $5^{\text{th}}$ to $95^{\text{th}}$ percentile of the observed treatment distribution. This ensures that all models are evaluated robustly on a scientifically meaningful domain.
 
 \textbf{FDR} quantifies the proportion of incorrectly selected variables:
 \[

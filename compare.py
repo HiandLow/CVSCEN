@@ -81,8 +81,9 @@ def evaluate(model, data_dict, dataset_type, train_size=0.9):
     model.fit(data_dict['x'][idx_train], data_dict['a'][idx_train], data_dict['yf'][idx_train])
 
     grid_size = 2 ** 6 + 1
-    dx = 1. / (grid_size - 1)
-    treat_grid = np.linspace(np.finfo(float).eps, 1.0, grid_size)
+    t_min, t_max = np.percentile(data_dict['a'], 5), np.percentile(data_dict['a'], 95)
+    dx = (t_max - t_min) / (grid_size - 1)
+    treat_grid = np.linspace(t_min, t_max, grid_size)
     coefs = (data_dict["treat_coef"], data_dict["out_coef"])
 
     def compute_metrics(x_set):
@@ -197,5 +198,6 @@ if __name__ == "__main__":
     print(f"[{model_type} - {dataset_type}] Average mise out: {avg_mise_out:.4f}, Average adrfe out: {avg_adrfe_out:.4f}")
 
     grid_size = 2 ** 6 + 1
-    treat_grid = np.linspace(np.finfo(float).eps, 1.0, grid_size)
+    t_min, t_max = np.percentile(loaded_data['a'], 5), np.percentile(loaded_data['a'], 95)
+    treat_grid = np.linspace(t_min, t_max, grid_size)
     utils.plot_drf(treat_grid, np.mean(all_f_out, axis=0), np.mean(all_p_out, axis=0), f"{model_type.lower()}_{dataset_type.lower()}")

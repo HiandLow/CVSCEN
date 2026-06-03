@@ -10,50 +10,35 @@ import utils
 def evaluate_model(data, dataset_type='ihdp', tune=None):
     if dataset_type == 'ihdp':
         hparams = {
-            "coef_loss": [10.0, 0.25, 0.25, 0.25],
+            "weight_hsic": 0.25,
+            "coef_loss_c": 0.25,
+            "coef_loss_p": 0.25,
             "weight_corr": 50.0,
-            "temp_end": 0.1,
             "lr_s": 1e-2,
             "lr_p": 1e-4,
             "dim_layer": 64,
-            "lambda_": 1.0,
-            "epoch_total": 500,
-            "step_size": 100,
-            "batch_size": 32,
-            "weight_decay": 1e-3,
-            "L_pe": 3,
+            "epoch_total": 1,
         }
     else:
         hparams = {
-            "coef_loss": [1.0, 10.0, 1.15, 0.75],
+            "weight_hsic": 10.0,
+            "coef_loss_c": 1.15,
+            "coef_loss_p": 0.75,
             "weight_corr": 0.25,
-            "temp_end": 0.1,
             "lr_s": 1e-2,
             "lr_p": 1e-4,
             "dim_layer": 256,
-            "lambda_": 1.5,
             "epoch_total": 300,
-            "step_size": 100,
-            "batch_size": 32,
-            "weight_decay": 1e-3,
-            "L_pe": 3,
         }
 
     if tune:
         hparams.update(tune)
 
     dim_l = hparams["dim_layer"]
-    fix = {
-        "num_layers": 2,
-        "temp_start": 10.0,
-        "gamma": 0.97,
-    }
-
-    hparams.update(fix)
 
     dataset = {k: data[k] for k in data.keys()}
     set_train, set_val, set_test, coefs = utils.split_data(dataset, train_size=0.63, val_size=0.27)
-    loader_train, loader_val, loader_test = [DataLoader(ds, batch_size = hparams["batch_size"], shuffle = is_train) 
+    loader_train, loader_val, loader_test = [DataLoader(ds, batch_size=64, shuffle=is_train) 
         for ds, is_train in zip([set_train, set_val, set_test], [True, False, False])]
 
     info = {
@@ -71,13 +56,14 @@ def evaluate_model(data, dataset_type='ihdp', tune=None):
     param_p = list(predictor_y.parameters())
 
     optimizer_s = torch.optim.Adam(param_s, lr = hparams["lr_s"])
-    optimizer_p = torch.optim.Adam(param_p, lr = hparams["lr_p"], weight_decay = hparams['weight_decay'])
+    optimizer_p = torch.optim.Adam(param_p, lr = hparams["lr_p"], weight_decay = 1e-3)
 
-    scheduler_s = torch.optim.lr_scheduler.StepLR(optimizer_s, step_size = hparams["step_size"], gamma = hparams["gamma"])
-    scheduler_p = torch.optim.lr_scheduler.StepLR(optimizer_p, step_size = hparams["step_size"], gamma = hparams["gamma"])
+    scheduler_s = torch.optim.lr_scheduler.StepLR(optimizer_s, step_size=100, gamma=0.97)
+    scheduler_p = torch.optim.lr_scheduler.StepLR(optimizer_p, step_size=100, gamma=0.97)
 
-    model_main = model.train_model(model_main, optimizer_s, optimizer_p, scheduler_s, scheduler_p, \
-                                   loader_train, loader_val, hparams["coef_loss"])
+    coef_loss_list = [hparams["weight_hsic"], hparams["coef_loss_c"], hparams["coef_loss_p"]]
+    model_main, _, _ = model.train_model(model_main, optimizer_s, optimizer_p, scheduler_s, scheduler_p, \
+                                   loader_train, loader_val, coef_loss_list)
 
     mise_tr, adrfe_tr, _, _, _, drf_tr = model.evaluate(model_main, loader_train, coefs, dataset_type)
     mise_te, adrfe_te, fdr_te, tpr_te, c_te, drf_te = model.evaluate(model_main, loader_test, coefs, dataset_type)
@@ -89,6 +75,20 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='ihdp', choices=['ihdp', 'synt'])
     args = parser.parse_args()
     dataset_type = args.dataset
+
+    import os
+    import json
+    tune_params = None
+    best_hparams_file = f"best_hparams_{dataset_type}.json"
+    if os.path.exists(best_hparams_file):
+        print(f"Loading tuned hyperparameters from {best_hparams_file}...")
+        with open(best_hparams_file, "r") as f:
+            tune_params = json.load(f)
+            # Backward compatibility for old JSON files
+            if "coef_loss_u" in tune_params:
+                tune_params["coef_loss_c"] = tune_params.pop("coef_loss_u")
+            if "coef_loss_v" in tune_params:
+                tune_params["coef_loss_p"] = tune_params.pop("coef_loss_v")
 
     mise_tr_list = []
     mise_te_list = []
@@ -104,19 +104,16 @@ if __name__ == "__main__":
     drf_te_list = []
 
     num_features = 25 if dataset_type == 'ihdp' else 100
-    c_u_te_list = np.zeros(num_features, dtype=int)
-    c_v_te_list = np.zeros(num_features, dtype=int)
-    c_uv_te_list = np.zeros(num_features, dtype=int)
-    
-    # We let evaluate_model use the default tune for the dataset type by passing tune=None
-    tune = None
+    c_c_te_list = np.zeros(num_features, dtype=int)
+    c_p_te_list = np.zeros(num_features, dtype=int)
+    c_cp_te_list = np.zeros(num_features, dtype=int)
 
     for i in range(10):
         data_name = f'./data/ihdp_semi_{i}.pkl' if dataset_type == 'ihdp' else f'./data/cont_synthetic_{i}.pkl'
         with open(data_name, 'rb') as file:
             data = pickle.load(file)
 
-        mise_tr, adrfe_tr, mise_te, adrfe_te, fdr_te, tpr_te, c_te, drf_tr, drf_te = evaluate_model(data, dataset_type, tune)
+        mise_tr, adrfe_tr, mise_te, adrfe_te, fdr_te, tpr_te, c_te, drf_tr, drf_te = evaluate_model(data, dataset_type, tune_params)
         
         mise_tr_list.append(mise_tr)
         mise_te_list.append(mise_te)
@@ -128,9 +125,9 @@ if __name__ == "__main__":
         tpr1_te_list.append(tpr_te[0])
         tpr2_te_list.append(tpr_te[1])
         tpr3_te_list.append(tpr_te[2])
-        c_u_te_list += c_te[0]
-        c_v_te_list += c_te[1]
-        c_uv_te_list += c_te[2]
+        c_c_te_list += c_te[0]
+        c_p_te_list += c_te[1]
+        c_cp_te_list += c_te[2]
         drf_tr_list.append(drf_tr)
         drf_te_list.append(drf_te)
 
@@ -152,9 +149,9 @@ TPR1: {tpr_te[0]:.4f}, TPR2: {tpr_te[1]:.4f} TPR3: {tpr_te[2]:.4f}")
     avg_tpr2_te, std_tpr2_te = np.mean(tpr2_te_list), np.std(tpr2_te_list)
     avg_tpr3_te, std_tpr3_te = np.mean(tpr3_te_list), np.std(tpr3_te_list)
 
-    avg_c_u_te = np.mean(c_u_te_list)
-    avg_c_v_te = np.mean(c_v_te_list)
-    avg_c_uv_te = np.mean(c_uv_te_list)
+    avg_c_c_te = np.mean(c_c_te_list)
+    avg_c_p_te = np.mean(c_p_te_list)
+    avg_c_cp_te = np.mean(c_cp_te_list)
 
     avg_pred_tr, avg_fact_tr, t_axis_tr = np.mean(drf_tr_list, axis=0)
     avg_pred_te, avg_fact_te, t_axis_te = np.mean(drf_te_list, axis=0)
@@ -169,6 +166,6 @@ TPR1: {:.4f} ± {:.4f}, TPR2: {:.4f} ± {:.4f} TPR3: {:.4f} ± {:.4f}".format(
         avg_fdr1_te, std_fdr1_te, avg_fdr2_te, std_fdr2_te, avg_fdr3_te, std_fdr3_te, 
         avg_tpr1_te, std_tpr1_te, avg_tpr2_te, std_tpr2_te, avg_tpr3_te, std_tpr3_te))
     
-    utils.plot_curve(data['x'].shape[1], c_u_te_list, c_v_te_list, str(np.sum(c_u_te_list)), str(np.sum(c_v_te_list)), "Each")
-    utils.plot_curve(data['x'].shape[1], c_uv_te_list, np.zeros_like(c_uv_te_list), str(np.sum(c_uv_te_list)), "0", "Union")
+    utils.plot_curve(data['x'].shape[1], c_c_te_list, c_p_te_list, str(np.sum(c_c_te_list)), str(np.sum(c_p_te_list)), "Each")
+    utils.plot_curve(data['x'].shape[1], c_cp_te_list, np.zeros_like(c_cp_te_list), str(np.sum(c_cp_te_list)), "0", "Union")
     utils.plot_drf(t_axis_te, avg_fact_te, avg_pred_te, f"vscen_{dataset_type}")

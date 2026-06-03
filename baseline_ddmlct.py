@@ -35,7 +35,8 @@ class DDMLCTWrapper:
         
         # Grid for dose-response curve
         grid_size = 2**6 + 1
-        self.t_list = np.linspace(np.finfo(float).eps, 1.0, grid_size)
+        t_min, t_max = np.percentile(T, 5), np.percentile(T, 95)
+        self.t_list = np.linspace(t_min, t_max, grid_size)
         
         # 1. First round estimation with rule of thumb bandwidth
         L = 5
