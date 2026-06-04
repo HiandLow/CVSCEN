@@ -115,6 +115,17 @@ if __name__ == "__main__":
     dataset_type = args.dataset
     model_type = args.model
 
+    import json
+    import os
+    tune_params = {}
+    best_hparams_file = os.path.join('tune', f"best_hparams_{model_type}_{dataset_type}.json")
+    if os.path.exists(best_hparams_file):
+        print(f"Loading tuned hyperparameters from {best_hparams_file}...")
+        with open(best_hparams_file, "r") as f:
+            tune_params = json.load(f)
+    else:
+        print(f"No tuned hyperparameters found at {best_hparams_file}, using defaults.")
+
     if model_type == 'Base':
         model = Base()
     elif model_type == 'LDML':
@@ -124,34 +135,34 @@ if __name__ == "__main__":
     elif model_type == 'LRL':
         model = LRL()
     elif model_type == 'VCNet':
-        from baseline_vcnet import VCNetWrapper
+        from baselines.vcnet.baseline_vcnet import VCNetWrapper
         # Dim = 25 for IHDP, 100 for Synt
         dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = VCNetWrapper(num_features=dim_x, model_name='Vcnet_tr')
+        model = VCNetWrapper(num_features=dim_x, model_name='Vcnet_tr', **tune_params)
     elif model_type == 'DRNet':
-        from baseline_vcnet import VCNetWrapper
+        from baselines.vcnet.baseline_vcnet import VCNetWrapper
         dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = VCNetWrapper(num_features=dim_x, model_name='Drnet_tr')
+        model = VCNetWrapper(num_features=dim_x, model_name='Drnet_tr', **tune_params)
     elif model_type == 'SCIGAN':
-        from baseline_scigan import SCIGANWrapper
+        from baselines.scigan.baseline_scigan import SCIGANWrapper
         dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = SCIGANWrapper(num_features=dim_x)
+        model = SCIGANWrapper(num_features=dim_x, **tune_params)
     elif model_type == 'DDMLCT':
-        from baseline_ddmlct import DDMLCTWrapper
+        from baselines.ddmlct.baseline_ddmlct import DDMLCTWrapper
         dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = DDMLCTWrapper(num_features=dim_x)
+        model = DDMLCTWrapper(num_features=dim_x, **tune_params)
     elif model_type == 'GIKS':
-        from baseline_giks import GIKSWrapper
+        from baselines.giks.baseline_giks import GIKSWrapper
         dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = GIKSWrapper(num_features=dim_x)
+        model = GIKSWrapper(num_features=dim_x, **tune_params)
     elif model_type == 'ACFR':
-        from baseline_acfr import ACFRWrapper
+        from baselines.acfr.baseline_acfr import ACFRWrapper
         dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = ACFRWrapper(num_features=dim_x)
+        model = ACFRWrapper(num_features=dim_x, **tune_params)
     elif model_type == 'CSB':
-        from baseline_csb import CSBWrapper
+        from baselines.csb.baseline_csb import CSBWrapper
         dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = CSBWrapper(num_features=dim_x)
+        model = CSBWrapper(num_features=dim_x, **tune_params)
 
     mise_in_list = []
     mise_out_list = []
@@ -189,13 +200,13 @@ if __name__ == "__main__":
 
         print(f"[{model_type} - {dataset_type}] {i}th data\nIn-Sample mise: {mise_in:.4f}, adrfe: {adrfe_in:.4f}, \nOut-Sample mise: {mise_out:.4f}, adrfe: {adrfe_out:.4f}")
 
-    avg_mise_in = np.mean(mise_in_list)
-    avg_mise_out = np.mean(mise_out_list)
-    avg_adrfe_in = np.mean(adrfe_in_list)
-    avg_adrfe_out = np.mean(adrfe_out_list)
+    avg_mise_in, std_mise_in = np.mean(mise_in_list), np.std(mise_in_list)
+    avg_mise_out, std_mise_out = np.mean(mise_out_list), np.std(mise_out_list)
+    avg_adrfe_in, std_adrfe_in = np.mean(adrfe_in_list), np.std(adrfe_in_list)
+    avg_adrfe_out, std_adrfe_out = np.mean(adrfe_out_list), np.std(adrfe_out_list)
 
-    print(f"[{model_type} - {dataset_type}] Average mise in: {avg_mise_in:.4f}, Average adrfe in: {avg_adrfe_in:.4f}")
-    print(f"[{model_type} - {dataset_type}] Average mise out: {avg_mise_out:.4f}, Average adrfe out: {avg_adrfe_out:.4f}")
+    print(f"[{model_type} - {dataset_type}] Average In-Sample over all iterations\nmise: {avg_mise_in:.4f} ± {std_mise_in:.4f}, adrfe: {avg_adrfe_in:.4f} ± {std_adrfe_in:.4f}")
+    print(f"[{model_type} - {dataset_type}] Average Out-Sample over all iterations\nmise: {avg_mise_out:.4f} ± {std_mise_out:.4f}, adrfe: {avg_adrfe_out:.4f} ± {std_adrfe_out:.4f}")
 
     grid_size = 2 ** 6 + 1
     t_min, t_max = np.percentile(loaded_data['a'], 5), np.percentile(loaded_data['a'], 95)

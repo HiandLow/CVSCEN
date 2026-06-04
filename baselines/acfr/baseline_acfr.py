@@ -7,7 +7,7 @@ import copy
 from tqdm import trange
 
 # Add the cloned repository to sys.path to resolve internal imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'baselines/acfr'))
+sys.path.insert(0, os.path.dirname(__file__))
 
 from models.acfr import acfr
 
@@ -30,22 +30,23 @@ class NumpyDataset(Dataset):
             return self.T[idx], self.X[idx]
 
 class ACFRWrapper:
-    def __init__(self, num_features=25):
+    def __init__(self, num_features=25, **kwargs):
         self.num_features = num_features
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        dim = kwargs.get('dim_layer', 50)
         self.cfg = {
-            'lr1': 0.005,
-            'lr2': 0.05,
-            'gamma1': 1,
-            'gamma2': 0.2,
+            'lr1': kwargs.get('lr', 0.005),
+            'lr2': kwargs.get('lr_s', 0.05),
+            'gamma1': kwargs.get('gamma1', 1),
+            'gamma2': kwargs.get('gamma2', 0.2),
             'm': 50,
             'std': 0.2,
             'batch_size': 64,
             'weight_decay': 0.001,
-            'epoch_number': 300,
-            'encoder_net': {'input_dim': self.num_features, 'hidden_dims': [50, 50], 'output_dim': 50},
-            'prediction_net': {'input_dim': 50, 'hidden_dims': [50, 50], 'output_dim': 1},
-            'discrimination_net': {'input_dim': 50, 'hidden_dims': [50, 50], 'output_dim': 1}
+            'epoch_number': kwargs.get('epoch_total', 300),
+            'encoder_net': {'input_dim': self.num_features, 'hidden_dims': [dim, dim], 'output_dim': dim},
+            'prediction_net': {'input_dim': dim, 'hidden_dims': [dim, dim], 'output_dim': 1},
+            'discrimination_net': {'input_dim': dim, 'hidden_dims': [dim, dim], 'output_dim': 1}
         }
 
     def fit(self, X, T, Y):

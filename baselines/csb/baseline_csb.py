@@ -8,9 +8,9 @@ from torch.utils.data import Dataset, DataLoader
 
 # Add ibex to sys path so we can import its modules
 current_dir = os.path.dirname(os.path.abspath(__file__))
-csb_dir = os.path.join(current_dir, "baselines", "csb")
-if csb_dir not in sys.path:
-    sys.path.insert(0, csb_dir)
+if current_dir not in sys.path:
+
+    sys.path.insert(0, current_dir)
 
 from CCS_divergence import CS
 from src.networks import CCS_Counterfactual_Net
@@ -38,23 +38,23 @@ class NumpyDataset(Dataset):
             return self.T[idx], self.X[idx]
 
 class CSBWrapper:
-    def __init__(self, num_features=25):
+    def __init__(self, num_features=25, **kwargs):
         self.num_features = num_features
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Hyperparameters (from IBEX main.py defaults)
         self.batch_size = 64
-        self.n_epochs = 200 # Usually ~3000 in original paper, but keeping 200 for benchmark fairness
-        self.lr = 1e-3
-        self.beta = 0.001
-        self.gamma = 0.1
+        self.n_epochs = kwargs.get('epoch_total', 200) # Usually ~3000 in original paper, but keeping 200 for benchmark fairness
+        self.lr = kwargs.get('lr', 1e-3)
+        self.beta = kwargs.get('beta', 0.001)
+        self.gamma = kwargs.get('gamma', 0.1)
         self.use_attention = True
         self.use_spline = False
         
         # Init model
         t_dim_latent = 8
         z_dim = 32  # Used 32 for News/IHDP style, 16 for Mimic
-        hidden_dim = 512
+        hidden_dim = kwargs.get('dim_layer', 512)
         
         self.model = CCS_Counterfactual_Net(
             x_dim=self.num_features,

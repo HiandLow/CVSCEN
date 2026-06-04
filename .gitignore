@@ -1,4 +1,7 @@
 __pycache__/
-data/
+data/*
+!data/*.py
+tune/
+!tune/*.py
 paper/
-result/
+figures/

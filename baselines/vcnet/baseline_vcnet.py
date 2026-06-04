@@ -3,7 +3,7 @@ import os
 import numpy as np
 
 class VCNetWrapper:
-    def __init__(self, num_features, model_name='Vcnet_tr', n_epochs=500):
+    def __init__(self, num_features, model_name='Vcnet_tr', n_epochs=500, **kwargs):
         import torch
         self.device = torch.device("cpu")
         self.model_name = model_name
@@ -11,19 +11,23 @@ class VCNetWrapper:
         
         # Add original VCNet directory to path to import their models
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        vcnet_dir = os.path.join(current_dir, "baselines", "vcnet")
-        if vcnet_dir not in sys.path:
-            sys.path.insert(0, vcnet_dir)
+        if current_dir not in sys.path:
+            sys.path.insert(0, current_dir)
             
         vscen_data = sys.modules.pop('data', None)
         from dynamic_net import Vcnet, TR, Drnet
         if vscen_data is not None:
             sys.modules['data'] = vscen_data
         
+        self.dim = kwargs.get('dim_layer', 50)
+        self.init_lr = kwargs.get('lr', 0.001 if 'Vcnet' in self.model_name else 0.02)
+        self.alpha = kwargs.get('alpha', 0.5)
+        self.n_epochs = kwargs.get('epoch_total', n_epochs)
+
         # Default cfg
-        cfg_density = [(num_features, 50, 1, 'relu'), (50, 50, 1, 'relu')]
+        cfg_density = [(num_features, self.dim, 1, 'relu'), (self.dim, self.dim, 1, 'relu')]
         num_grid = 10
-        cfg = [(50, 50, 1, 'relu'), (50, 1, 1, 'id')]
+        cfg = [(self.dim, self.dim, 1, 'relu'), (self.dim, 1, 1, 'id')]
         degree = 2
         knots = [0.33, 0.66]
         
@@ -57,8 +61,8 @@ class VCNetWrapper:
         loader = DataLoader(dataset, batch_size=471, shuffle=True)
         
         # optimizers
-        init_lr = 0.001 if 'Vcnet' in self.model_name else 0.02
-        alpha = 0.5
+        init_lr = self.init_lr
+        alpha = self.alpha
         beta = 1.
         wd = 5e-3
         momentum = 0.9
@@ -81,6 +85,7 @@ class VCNetWrapper:
                     trg = self.TargetReg(t)
                     loss = criterion(out, y, alpha=alpha) + criterion_TR(out, trg, y, beta=beta)
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                     optimizer.step()
                     
                     tr_optimizer.zero_grad()
@@ -88,12 +93,14 @@ class VCNetWrapper:
                     trg = self.TargetReg(t)
                     tr_loss = criterion_TR(out, trg, y, beta=beta)
                     tr_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.TargetReg.parameters(), 1.0)
                     tr_optimizer.step()
                 else:
                     optimizer.zero_grad()
                     out = self.model(t, x)
                     loss = criterion(out, y, alpha=alpha)
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                     optimizer.step()
 
     def predict(self, X, T):

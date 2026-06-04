@@ -79,7 +79,7 @@ if __name__ == "__main__":
     import os
     import json
     tune_params = None
-    best_hparams_file = f"best_hparams_{dataset_type}.json"
+    best_hparams_file = os.path.join("tune", f"best_hparams_{dataset_type}.json")
     if os.path.exists(best_hparams_file):
         print(f"Loading tuned hyperparameters from {best_hparams_file}...")
         with open(best_hparams_file, "r") as f:
@@ -168,4 +168,4 @@ TPR1: {:.4f} ± {:.4f}, TPR2: {:.4f} ± {:.4f} TPR3: {:.4f} ± {:.4f}".format(
     
     utils.plot_curve(data['x'].shape[1], c_c_te_list, c_p_te_list, str(np.sum(c_c_te_list)), str(np.sum(c_p_te_list)), "Each")
     utils.plot_curve(data['x'].shape[1], c_cp_te_list, np.zeros_like(c_cp_te_list), str(np.sum(c_cp_te_list)), "0", "Union")
-    utils.plot_drf(t_axis_te, avg_fact_te, avg_pred_te, f"vscen_{dataset_type}")
+    utils.plot_drf(t_axis_te, avg_fact_te, avg_pred_te, f"cvscen_{dataset_type}")

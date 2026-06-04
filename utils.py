@@ -114,16 +114,28 @@ def plot_curve(axis, a, b, string_a, string_b, file_name, bin_size=100):
     
     plt.tight_layout()
     plt.legend(fontsize=12)
-    plt.savefig('./result/' + file_name + '.png')
+    plt.savefig('./figures/' + file_name + '.png')
     plt.close()
 
 def plot_drf(t_axis, avg_fact, avg_pred, file_name):
+    model_name = file_name.split('_')[0].upper()
+    if model_name == "VSCEN":
+        model_name = "CVSCEN"
+        
     plt.figure(figsize=(8, 6))
-    plt.plot(t_axis, avg_fact, color='black', linestyle='--', linewidth=2)
-    plt.plot(t_axis, avg_pred, color='red', linewidth=2)
+    plt.plot(t_axis, avg_fact, color='black', linestyle='--', linewidth=3, label='True ADRF')
+    plt.plot(t_axis, avg_pred, color='red', linewidth=3, label='Pred ADRF')
     plt.fill_between(t_axis, avg_fact, avg_pred, color='red', alpha=0.1)
+    
+    plt.title(model_name, fontsize=24)
+    plt.xlabel("Treatment (a)", fontsize=20)
+    plt.ylabel("Outcome (Y)", fontsize=20)
+    plt.xticks(fontsize=16)
+    plt.yticks(fontsize=16)
+    plt.legend(fontsize=18, loc='best')
     plt.grid(True, alpha=0.3)
-    plt.savefig('./result/' + file_name +'.png')
+    plt.tight_layout()
+    plt.savefig('./figures/' + file_name +'.png')
     plt.close()
 
 if __name__ == "__main__":

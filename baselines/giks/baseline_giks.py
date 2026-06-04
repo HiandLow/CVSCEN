@@ -14,12 +14,13 @@ class GIKSWrapper:
     1. Factual training (standard MSE on observed data)
     2. Gradient Interpolation (GI) for nearby counterfactuals
     """
-    def __init__(self, num_features):
+    def __init__(self, num_features, **kwargs):
         self.num_features = num_features
+        self.hparams = kwargs
         
         # Setup paths
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        giks_dir = os.path.join(current_dir, "baselines", "giks")
+        giks_dir = current_dir
         
         # Temporarily swap sys.modules to avoid 'utils' collision
         # Our project has utils.py, GIKS has utils/ package
@@ -94,11 +95,11 @@ class GIKSWrapper:
         model.to(self._device, dtype=torch.float64)
         
         # Hyperparameters (from GIKS paper for IHDP)
-        lr = 1e-2
+        lr = self.hparams.get('lr', 1e-2)
         wd = 5e-3
-        num_epochs = 200
+        num_epochs = self.hparams.get('epoch_total', 200)
         batch_size = 128
-        gi_lambda = 1e-4  # GI regularization strength
+        gi_lambda = self.hparams.get('gi_lambda', 1e-4)  # GI regularization strength
         gi_linear_delta = 0.05  # neighborhood for GI
         
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
@@ -110,7 +111,8 @@ class GIKSWrapper:
         train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
         
         # Phase 1: Factual pre-training (100 epochs)
-        for epoch in range(100):
+        phase1_epochs = num_epochs // 2
+        for epoch in range(phase1_epochs):
             model.train()
             for batch_inp, batch_y, batch_ids in train_loader:
                 optimizer.zero_grad()
@@ -124,7 +126,8 @@ class GIKSWrapper:
                 optimizer.step()
         
         # Phase 2: GIKS training with GI augmentation (100 more epochs)
-        for epoch in range(100):
+        phase2_epochs = num_epochs - phase1_epochs
+        for epoch in range(phase2_epochs):
             model.train()
             for batch_inp, batch_y, batch_ids in train_loader:
                 optimizer.zero_grad()

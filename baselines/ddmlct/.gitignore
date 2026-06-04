@@ -1,0 +1,29 @@
+# Don't track content of these folders
+old/
+Relevant Papers/
+Archive/
+
+# Miscellaneous log files and such
+*.aux
+*.bbl
+*.blg
+*.log
+*.gz
+*.zip
+*.xml
+*.bcf
+*.dta
+*.zip
+*.xla
+*.bib
+*.tex
+*.pdf
+Tuning Simulation.py
+Tuning emp app.py
+.Rhistory
+.spyproject
+sim_test.py
+Testing.py
+
+
+

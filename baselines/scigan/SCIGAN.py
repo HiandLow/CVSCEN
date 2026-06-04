@@ -1,7 +1,10 @@
 # Copyright (c) 2020, Ioana Bica
 
 import numpy as np
-import tensorflow as tf
+import os
+os.environ['TF_USE_LEGACY_KERAS'] = '1'
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 from tqdm import tqdm
 
 from utils.model_utils import equivariant_layer, invariant_layer, sample_dosages, sample_X, sample_Z

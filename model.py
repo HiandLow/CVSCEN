@@ -167,7 +167,10 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
             # a is safely reshaped to 2D (batch_size, 1) for HSIC
             loss_hsic_val = hsic_loss(x_p, a.view(-1, 1), sigma_x=1.0, sigma_y=1.0)
             
-            loss = loss_y + coef_loss[0] * loss_hsic_val + coef_loss[1] * m_c.mean() + coef_loss[2] * m_p.mean()
+            # Method C (Two-Phase Step Annealing triggered by use_corr)
+            anneal_weight = 1.0 if getattr(model.vsl, 'use_corr', False) else 0.0
+            
+            loss = loss_y + coef_loss[0] * loss_hsic_val + (coef_loss[1] * m_c.mean() + coef_loss[2] * m_p.mean()) * anneal_weight
 
 
             loss.backward()
@@ -188,7 +191,10 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
                 
                 loss_y = F.smooth_l1_loss(y_star_hat, yf, beta=1.0)
                 loss_hsic_val = hsic_loss(x_p, a.view(-1, 1), sigma_x=1.0, sigma_y=1.0)
-                loss = loss_y + coef_loss[0] * loss_hsic_val + coef_loss[1] * m_c.mean() + coef_loss[2] * m_p.mean()
+                
+                anneal_weight = 1.0 if getattr(model.vsl, 'use_corr', False) else 0.0
+                
+                loss = loss_y + coef_loss[0] * loss_hsic_val + (coef_loss[1] * m_c.mean() + coef_loss[2] * m_p.mean()) * anneal_weight
 
                 loss_val_y.append(loss_y.item())
                 loss_val_hsic.append(loss_hsic_val.item())
@@ -213,7 +219,7 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
     plt.ylabel('MSE Loss')
     plt.legend()
     plt.grid(True)
-    plt.savefig('./result/learning_curve.png')
+    plt.savefig('./figures/learning_curve.png')
     plt.close()
 
     return model, history_train_y, history_val_y
