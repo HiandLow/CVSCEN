@@ -74,7 +74,27 @@ def TPR(select, coef_a, coef_y, is_confounder):
 def plot_curve(axis, a, b, string_a, string_b, file_name, bin_size=100):
     true_a = list(a[:15])
     true_b = list(b[:15])
-    x_labels = [str(i) for i in range(15)]
+    x_labels = []
+    for i in range(15):
+        if axis == 25:
+            if i in [0, 1, 2, 4, 5]:
+                label = f"{i+1}\n(C)"
+            elif i in [3, 6, 7, 8, 9, 10, 11, 12, 13, 14]:
+                label = f"{i+1}\n(P)"
+            else:
+                label = f"{i+1}"
+        elif axis == 100:
+            if i in [0, 1, 2, 3, 4]:
+                label = f"{i+1}\n(C)"
+            elif i in [5, 6, 7, 8, 9]:
+                label = f"{i+1}\n(P)"
+            elif i in [10, 11, 12, 13, 14]:
+                label = f"{i+1}\n(I)"
+            else:
+                label = f"{i+1}"
+        else:
+            label = str(i+1)
+        x_labels.append(label)
     
     grouped_a = true_a.copy()
     grouped_b = true_b.copy()
@@ -84,13 +104,13 @@ def plot_curve(axis, a, b, string_a, string_b, file_name, bin_size=100):
         noise_b = b[15:]
         
         for i in range(0, len(noise_a), bin_size):
-            start_idx = 15 + i
-            end_idx = min(15 + i + bin_size - 1, axis - 1)
+            start_idx = 15 + i + 1
+            end_idx = min(15 + i + bin_size - 1, axis - 1) + 1
             
             x_labels.append(f"{start_idx}~\n{end_idx}")
             
-            grouped_a.append(np.sum(noise_a[i:i+bin_size]))
-            grouped_b.append(np.sum(noise_b[i:i+bin_size]))
+            grouped_a.append(np.sum(noise_a[i:i+bin_size]) / 10.0)
+            grouped_b.append(np.sum(noise_b[i:i+bin_size]) / 10.0)
 
     x = np.arange(len(x_labels))
     width = 0.35

@@ -8,14 +8,24 @@ import matplotlib.pyplot as plt
 import utils
 import copy
 
-def rbf_kernel(X, sigma=1.0):
+def rbf_kernel(X, sigma=None):
     XX = X.matmul(X.t())
     X_sqnorms = torch.diagonal(XX)
     r = X_sqnorms.unsqueeze(0) - 2 * XX + X_sqnorms.unsqueeze(1)
+    
+    if sigma is None:
+        # Median heuristic to prevent kernel collapse in high dimensions
+        r_flat = r.view(-1)
+        mask = r_flat > 1e-8
+        if mask.sum() > 0:
+            sigma = torch.sqrt(torch.median(r_flat[mask])).item()
+        else:
+            sigma = 1.0
+            
     K = torch.exp(-r / (2 * sigma ** 2))
     return K
 
-def hsic_loss(X, Y, sigma_x=1.0, sigma_y=1.0):
+def hsic_loss(X, Y, sigma_x=None, sigma_y=None):
     K = rbf_kernel(X, sigma_x)
     L = rbf_kernel(Y, sigma_y)
     n = K.size(0)
@@ -48,7 +58,7 @@ class VSLayer(BaseModule):
         if self.training and epoch > self.epoch:
             self.temp = self.temp_start * (self.temp_end / self.temp_start) ** (epoch / self.epoch_total)
             self.use_corr = self.temp <= 1.0
-            self.HSIC[:, 1] = self.HSIC_xa * self.use_corr * self.weight_corr
+            self.HSIC[:, 1] = torch.clamp(self.HSIC_xa, max=0.0) * self.use_corr * self.weight_corr
             self.epoch = epoch
 
         if self.training:
@@ -78,35 +88,50 @@ class POLayer(BaseModule):
     def __init__(self, info, hparams):
         super().__init__(info, hparams)
         self.L_pe = 3
-        self.num_layers = 2
 
         self.dim_a_expanded = 1 + 2 * self.L_pe  # [a, sin(2^0*pi*a), cos(2^0*pi*a), ..., sin(2^(L_pe-1)*pi*a), cos(2^(L_pe-1)*pi*a)]
 
-        # Decoupled feature extractors
-        fe_c_layers = [torch.nn.Linear(self.dim_x, self.dim_layer)]
-        for _ in range(getattr(self, 'num_layers', 2)):
-            fe_c_layers.append(ResidualBlock(self.dim_layer))
-        self.fe_c = torch.nn.Sequential(*fe_c_layers)
+        # 1. Encoders (Feature Extractors)
+        # Shared C Trunk
+        self.fe_c_shared = torch.nn.Linear(self.dim_x, self.dim_layer)
+        # C Adapters
+        self.fe_c_base = ResidualBlock(self.dim_layer)
+        self.fe_c_cate = ResidualBlock(self.dim_layer)
+        
+        # P Encoders
+        self.fe_p_shared = torch.nn.Linear(self.dim_x, self.dim_layer)
+        self.fe_p_base = ResidualBlock(self.dim_layer)
+        self.fe_p_cate = ResidualBlock(self.dim_layer)
 
-        fe_p_layers = [torch.nn.Linear(self.dim_x, self.dim_layer)]
-        for _ in range(getattr(self, 'num_layers', 2)):
-            fe_p_layers.append(ResidualBlock(self.dim_layer))
-        self.fe_p = torch.nn.Sequential(*fe_p_layers)
+        # 2. Base Stream
+        self.pr_base = torch.nn.Sequential(
+            torch.nn.LayerNorm(2 * self.dim_layer),
+            torch.nn.SiLU(),
+            torch.nn.Linear(2 * self.dim_layer, self.dim_layer),
+            torch.nn.SiLU(),
+            torch.nn.Linear(self.dim_layer, self.dim_y)
+        )
+
+        # 3. CATE Stream
+        self.pr_cate_feature = torch.nn.Sequential(
+            torch.nn.LayerNorm(2 * self.dim_layer),
+            torch.nn.SiLU(),
+            torch.nn.Linear(2 * self.dim_layer, self.dim_layer)
+        )
 
         self.ce_gamma = torch.nn.Sequential(
             torch.nn.Linear(self.dim_a_expanded, self.dim_layer),
             torch.nn.SiLU(),
-            torch.nn.Linear(self.dim_layer, self.dim_layer))   
+            torch.nn.Linear(self.dim_layer, self.dim_layer)
+        )   
         
         self.ce_beta = torch.nn.Sequential(
             torch.nn.Linear(self.dim_a_expanded, self.dim_layer),
             torch.nn.SiLU(),
-            torch.nn.Linear(self.dim_layer, self.dim_layer)) 
+            torch.nn.Linear(self.dim_layer, self.dim_layer)
+        ) 
 
-        self.pr = torch.nn.Sequential(
-            torch.nn.LayerNorm(self.dim_layer),
-            torch.nn.SiLU(),
-            torch.nn.Linear(self.dim_layer, self.dim_y))
+        self.pr_cate_linear = torch.nn.Linear(self.dim_layer, self.dim_y)
         
     def expand_a(self, a):
         # NeRF-style positional encoding: [a, sin(2^k * pi * a), cos(2^k * pi * a)] for k=0,...,L_pe-1
@@ -119,14 +144,32 @@ class POLayer(BaseModule):
     def forward(self, x_c, x_p, a):
         a_expanded = self.expand_a(a)
         
-        rep_c = self.fe_c(x_c)
-        rep_p = self.fe_p(x_p)
+        # 1. Extract Features
+        c_shared = self.fe_c_shared(x_c)
+        rep_c_base = self.fe_c_base(c_shared)
+        rep_c_cate = self.fe_c_cate(c_shared)
         
-        # Confounders are modulated by A, prognostics are strictly independent of A
-        phi_c = rep_c * (1 + self.ce_gamma(a_expanded)) + self.ce_beta(a_expanded)
-        phi_total = phi_c + rep_p
+        p_shared = self.fe_p_shared(x_p)
+        rep_p_base = self.fe_p_base(p_shared)
+        rep_p_cate = self.fe_p_cate(p_shared)
+        
+        # 2. Base Stream (No Treatment A)
+        cat_base = torch.cat([rep_c_base, rep_p_base], dim=-1)
+        y_base = self.pr_base(cat_base)
 
-        y_star_hat = self.pr(phi_total)
+        # 3. CATE Stream (C and P interaction, linearly modulated by A)
+        cat_cate = torch.cat([rep_c_cate, rep_p_cate], dim=-1)
+        cate_feat = self.pr_cate_feature(cat_cate)
+        
+        gamma_a = self.ce_gamma(a_expanded) # Removed tanh constraint for expressivity
+        beta_a = self.ce_beta(a_expanded)
+        
+        # Linear/Multiplicative Modulation (No non-linear sharing between P and A)
+        phi_cate = cate_feat * (1 + gamma_a) + beta_a
+        y_cate = self.pr_cate_linear(phi_cate)
+        
+        # 4. Final Output
+        y_star_hat = y_base + y_cate
         return y_star_hat
     
 class MainModel(BaseModule):
@@ -165,7 +208,7 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
             
             # Use HSIC to penalize dependency between Prognostic predictors (x_p) and Treatment (a)
             # a is safely reshaped to 2D (batch_size, 1) for HSIC
-            loss_hsic_val = hsic_loss(x_p, a.view(-1, 1), sigma_x=1.0, sigma_y=1.0)
+            loss_hsic_val = hsic_loss(x_p, a.view(-1, 1), sigma_x=None, sigma_y=None)
             
             # Method C (Two-Phase Step Annealing triggered by use_corr)
             anneal_weight = 1.0 if getattr(model.vsl, 'use_corr', False) else 0.0
@@ -190,7 +233,7 @@ def train_model(model, optimizer_s, optimizer_p, scheduler_s, scheduler_p, loade
                 y_star_hat, x_c, x_p, m_c, m_p = model(x, a, epoch)
                 
                 loss_y = F.smooth_l1_loss(y_star_hat, yf, beta=1.0)
-                loss_hsic_val = hsic_loss(x_p, a.view(-1, 1), sigma_x=1.0, sigma_y=1.0)
+                loss_hsic_val = hsic_loss(x_p, a.view(-1, 1), sigma_x=None, sigma_y=None)
                 
                 anneal_weight = 1.0 if getattr(model.vsl, 'use_corr', False) else 0.0
                 

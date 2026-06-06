@@ -79,7 +79,7 @@ if __name__ == "__main__":
     import os
     import json
     tune_params = None
-    best_hparams_file = os.path.join("tune", f"best_hparams_{dataset_type}.json")
+    best_hparams_file = os.path.join("tune", f"best_hparams_CVSCEN_{dataset_type}.json")
     if os.path.exists(best_hparams_file):
         print(f"Loading tuned hyperparameters from {best_hparams_file}...")
         with open(best_hparams_file, "r") as f:
