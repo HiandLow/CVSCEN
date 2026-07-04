@@ -21,7 +21,7 @@ def evaluate_model(data, dataset_type='ihdp', tune=None):
         }
     else:
         hparams = {
-            "weight_hsic": 10.0,
+            "weight_hsic": 0.25,
             "coef_loss_c": 1.15,
             "coef_loss_p": 0.75,
             "weight_corr": 0.25,
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     c_p_te_list = np.zeros(num_features, dtype=int)
     c_cp_te_list = np.zeros(num_features, dtype=int)
 
-    for i in range(10):
+    for i in range(1):
         data_name = f'./data/ihdp_semi_{i}.pkl' if dataset_type == 'ihdp' else f'./data/cont_synthetic_{i}.pkl'
         with open(data_name, 'rb') as file:
             data = pickle.load(file)

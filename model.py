@@ -48,6 +48,7 @@ class VSLayer(BaseModule):
         self.temp_start = 10.0
         self.temp_end = 0.1
         self.logits = torch.nn.Parameter(torch.zeros((self.dim_x, 3), device=self.device))
+        self.logits.data[:, 1] = 10.0
         self.HSIC_xa = torch.tanh(1.0 * (self.HSIC_xa - self.HSIC_xa.mean()) / self.HSIC_xa.std()).to(self.device)
         self.HSIC = torch.zeros_like(self.logits, device = self.device)
         self.temp = self.temp_start
