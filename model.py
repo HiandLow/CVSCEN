@@ -48,7 +48,7 @@ class VSLayer(BaseModule):
         self.temp_start = 10.0
         self.temp_end = 0.1
         self.logits = torch.nn.Parameter(torch.zeros((self.dim_x, 3), device=self.device))
-        self.logits.data[:, 1] = 10.0
+        self.logits.data[:, 1] = getattr(self, 'init_logit', 10.0)
         self.HSIC_xa = torch.tanh(1.0 * (self.HSIC_xa - self.HSIC_xa.mean()) / self.HSIC_xa.std()).to(self.device)
         self.HSIC = torch.zeros_like(self.logits, device = self.device)
         self.temp = self.temp_start
@@ -63,8 +63,11 @@ class VSLayer(BaseModule):
             self.epoch = epoch
 
         if self.training:
+            # logits_clamped = torch.clamp(self.logits, -5.0, 5.0)
+            # m = F.gumbel_softmax(logits_clamped + self.HSIC,\
+            #                  tau=self.temp, hard=False, dim=1)
             m = F.gumbel_softmax(self.logits + self.HSIC,\
-                             tau=self.temp, hard=False, dim=1)
+                    tau=self.temp, hard=False, dim=1)
             
         else:
             m = torch.argmax(self.logits + self.HSIC, dim=-1)

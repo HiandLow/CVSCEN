@@ -108,7 +108,7 @@ if __name__ == "__main__":
     c_p_te_list = np.zeros(num_features, dtype=int)
     c_cp_te_list = np.zeros(num_features, dtype=int)
 
-    for i in range(1):
+    for i in range(10):
         data_name = f'./data/ihdp_semi_{i}.pkl' if dataset_type == 'ihdp' else f'./data/cont_synthetic_{i}.pkl'
         with open(data_name, 'rb') as file:
             data = pickle.load(file)
