@@ -5,3 +5,4 @@ tune/
 !tune/*.py
 paper/
 figures/
+.agents/

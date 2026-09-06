@@ -33,10 +33,12 @@ class DDMLCTWrapper:
         # We use NeuralNet1k_emp_app and NeuralNet2_emp_app
         lr1 = self.hparams.get('lr', 0.05)
         lr2 = self.hparams.get('lr_s', 0.01)
+        dim_layer = self.hparams.get('dim_layer', 64)
         epochs = self.hparams.get('epoch_total', 300)
         
-        model_knn1 = self.mods.NeuralNet1k_emp_app(k=self.num_features, lr=lr1, momentum=0.9, epochs=epochs, weight_decay=0.01)
-        model_knn2 = self.mods.NeuralNet2_emp_app(k=self.num_features, lr=lr2, momentum=0.9, epochs=epochs, weight_decay=0.01)
+        wd = self.hparams.get('weight_decay', 0.01)
+        model_knn1 = self.mods.NeuralNet1k_emp_app(k=self.num_features, dim_layer=dim_layer, lr=lr1, momentum=0.9, epochs=epochs, weight_decay=wd)
+        model_knn2 = self.mods.NeuralNet2_emp_app(k=self.num_features, dim_layer=dim_layer, lr=lr2, momentum=0.9, epochs=epochs, weight_decay=wd)
         
         # Grid for dose-response curve
         grid_size = 2**6 + 1
@@ -44,7 +46,7 @@ class DDMLCTWrapper:
         self.t_list = np.linspace(t_min, t_max, grid_size)
         
         # 1. First round estimation with rule of thumb bandwidth
-        L = 5
+        L = self.hparams.get('L', 5)
         h = np.std(T) * 3 * (len(Y)**(-0.2))
         u = 0.5
         
@@ -54,8 +56,8 @@ class DDMLCTWrapper:
         
         # Fit model with h * u
         # Need to re-instantiate NN components so they train fresh, though DDMLCT fit resets them anyway
-        model_knn1_b = self.mods.NeuralNet1k_emp_app(k=self.num_features, lr=lr1, momentum=0.9, epochs=epochs, weight_decay=0.01)
-        model_knn2_b = self.mods.NeuralNet2_emp_app(k=self.num_features, lr=lr2, momentum=0.9, epochs=epochs, weight_decay=0.01)
+        model_knn1_b = self.mods.NeuralNet1k_emp_app(k=self.num_features, dim_layer=dim_layer, lr=lr1, momentum=0.9, epochs=epochs, weight_decay=wd)
+        model_knn2_b = self.mods.NeuralNet2_emp_app(k=self.num_features, dim_layer=dim_layer, lr=lr2, momentum=0.9, epochs=epochs, weight_decay=wd)
         model2 = self.est.NN_DDMLCT(model_knn1_b, model_knn2_b)
         model2.fit(X_df, T_series, Y_series, self.t_list, L=L, h=h*u, basis=False, standardize=True)
         
@@ -67,8 +69,8 @@ class DDMLCTWrapper:
         # 3. Final estimation with h_star
         h_final = 0.8 * h_star # Paper recommends scaling slightly
         
-        model_knn1_final = self.mods.NeuralNet1k_emp_app(k=self.num_features, lr=lr1, momentum=0.9, epochs=epochs, weight_decay=0.01)
-        model_knn2_final = self.mods.NeuralNet2_emp_app(k=self.num_features, lr=lr2, momentum=0.9, epochs=epochs, weight_decay=0.01)
+        model_knn1_final = self.mods.NeuralNet1k_emp_app(k=self.num_features, dim_layer=dim_layer, lr=lr1, momentum=0.9, epochs=epochs, weight_decay=wd)
+        model_knn2_final = self.mods.NeuralNet2_emp_app(k=self.num_features, dim_layer=dim_layer, lr=lr2, momentum=0.9, epochs=epochs, weight_decay=wd)
         self.model = self.est.NN_DDMLCT(model_knn1_final, model_knn2_final)
         self.model.fit(X_df, T_series, Y_series, self.t_list, L=L, h=h_final, basis=False, standardize=True)
         

@@ -82,11 +82,12 @@ class GIKSWrapper:
             T_t.view(-1, 1), X_t, Y_t.view(-1, 1)
         ], dim=1).to(dtype=torch.float64)
         
-        # Network architecture (matching GIKS paper IHDP config)
-        cfg_density = [(indim, 50, 1, 'relu'), (50, 50, 1, 'relu')]
-        cfg = [(50, 50, 1, 'relu'), (50, 1, 1, 'id')]
-        num_grid = 10
-        degree = 2
+        # Network architecture
+        dim = self.hparams.get('dim_layer', 50)
+        cfg_density = [(indim, dim, 1, 'relu'), (dim, dim, 1, 'relu')]
+        cfg = [(dim, dim, 1, 'relu'), (dim, 1, 1, 'id')]
+        num_grid = self.hparams.get('num_grid', 10)
+        degree = self.hparams.get('degree', 2)
         knots = [0.33, 0.66]
         
         # Build VCNet model
@@ -95,12 +96,12 @@ class GIKSWrapper:
         model.to(self._device, dtype=torch.float64)
         
         # Hyperparameters (from GIKS paper for IHDP)
-        lr = self.hparams.get('lr', 1e-2)
-        wd = 5e-3
+        lr = self.hparams.get('lr', 1e-3)
+        wd = self.hparams.get('weight_decay', 5e-3)
         num_epochs = self.hparams.get('epoch_total', 200)
-        batch_size = 128
+        batch_size = self.hparams.get('batch_size', 128)
         gi_lambda = self.hparams.get('gi_lambda', 1e-4)  # GI regularization strength
-        gi_linear_delta = 0.05  # neighborhood for GI
+        gi_linear_delta = self.hparams.get('gi_linear_delta', 0.05)  # neighborhood for GI
         
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
         mse_loss = nn.MSELoss()

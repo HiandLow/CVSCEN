@@ -69,14 +69,15 @@ class Base:
     def predict(self, X, T):
         return self.base
     
-def evaluate(model, data_dict, dataset_type, train_size=0.9):
+def evaluate(model, data_dict, dataset_type, train_size=0.63, val_size=0.27):
     n = data_dict['x'].shape[0]
 
-    indices = np.random.permutation(n)
+    indices = np.random.RandomState(42).permutation(n)
     train_end = int(train_size * n)
+    val_end = train_end + int(val_size * n)
 
     idx_train = indices[:train_end]
-    idx_test = indices[train_end:]
+    idx_test = indices[val_end:]
 
     model.fit(data_dict['x'][idx_train], data_dict['a'][idx_train], data_dict['yf'][idx_train])
 
@@ -122,7 +123,16 @@ if __name__ == "__main__":
     if os.path.exists(best_hparams_file):
         print(f"Loading tuned hyperparameters from {best_hparams_file}...")
         with open(best_hparams_file, "r") as f:
-            tune_params = json.load(f)
+            raw_params = json.load(f)
+            
+            # Remap model-specific parameters to override generic ones
+            suffix = f"_{model_type.lower()}"
+            for k, v in raw_params.items():
+                if k.endswith(suffix):
+                    tune_params[k.replace(suffix, "")] = v
+            for k, v in raw_params.items():
+                if not k.endswith(suffix) and k not in tune_params:
+                    tune_params[k] = v
     else:
         print(f"No tuned hyperparameters found at {best_hparams_file}, using defaults.")
 

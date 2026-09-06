@@ -29,9 +29,8 @@ def hsic_loss(X, Y, sigma_x=None, sigma_y=None):
     K = rbf_kernel(X, sigma_x)
     L = rbf_kernel(Y, sigma_y)
     n = K.size(0)
-    H = torch.eye(n, device=X.device) - (1.0 / n) * torch.ones((n, n), device=X.device)
-    Kc = H.matmul(K).matmul(H)
-    hsic = torch.trace(Kc.matmul(L)) / ((n - 1) ** 2)
+    Kc = K - K.mean(dim=0, keepdim=True) - K.mean(dim=1, keepdim=True) + K.mean()
+    hsic = torch.sum(Kc * L) / ((n - 1) ** 2)
     return hsic
 
 class BaseModule(nn.Module):
@@ -179,11 +178,36 @@ class POLayer(BaseModule):
 class MainModel(BaseModule):
     def __init__(self, info, hparams):
         super().__init__(info, hparams)
+        self.disable_vs = hparams.get('disable_vs', False)
+        self.use_mlp = hparams.get('use_mlp', False)
+        self.use_oracle = hparams.get('use_oracle', False)
+        
+        if self.use_mlp:
+            self.mlp = nn.Sequential(
+                nn.Linear(self.dim_x * 2 + 1, self.dim_layer),
+                nn.ReLU(),
+                nn.Linear(self.dim_layer, self.dim_layer),
+                nn.ReLU(),
+                nn.Linear(self.dim_layer, self.dim_y)
+            )
 
     def forward(self, x, a, epoch):
         m_c, m_p = self.vsl(epoch)
+        
+        if self.disable_vs:
+            m_c = torch.ones_like(m_c)
+            m_p = torch.ones_like(m_p)
+        elif self.use_oracle:
+            m_c = self.oracle_c.to(x.device)
+            m_p = self.oracle_p.to(x.device)
+            
         x_c, x_p = x * m_c, x * m_p
-        y_star_hat = self.pol(x_c, x_p, a)
+        
+        if getattr(self, 'use_mlp', False):
+            cat_input = torch.cat([x_c, x_p, a], dim=-1)
+            y_star_hat = self.mlp(cat_input)
+        else:
+            y_star_hat = self.pol(x_c, x_p, a)
 
         return y_star_hat, x_c, x_p, m_c, m_p
     
@@ -304,11 +328,15 @@ def evaluate(model, loader_test, coefs, dataset_type='ihdp', step=100):
             dx = (t_max - t_min) / (grid_size - 1)
             treat_grid = torch.linspace(t_min, t_max, grid_size, device=device)
 
-            pred_grid = torch.cat([model.pol(x_c, x_p, treat.expand_as(a)) for treat in treat_grid], dim=1)
-            if dataset_type == 'ihdp':
-                fact_grid = torch.cat([torch.tensor(data.get_effect_ihdp(uv.cpu().numpy(), treat.item(), coefs), dtype=torch.float32).unsqueeze(1).to(device) for treat in treat_grid], dim=1)
+            if getattr(model, 'use_mlp', False):
+                pred_grid = torch.cat([model.mlp(torch.cat([x_c, x_p, treat.expand_as(a)], dim=-1)) for treat in treat_grid], dim=1)
             else:
-                fact_grid = torch.cat([torch.tensor(data.get_effect_synt(uv.cpu().numpy(), treat.item(), coefs), dtype=torch.float32).unsqueeze(1).to(device) for treat in treat_grid], dim=1)
+                pred_grid = torch.cat([model.pol(x_c, x_p, treat.expand_as(a)) for treat in treat_grid], dim=1)
+                
+            if dataset_type == 'ihdp':
+                fact_grid = torch.cat([torch.tensor(data.get_effect_ihdp(x.cpu().numpy(), treat.item(), coefs), dtype=torch.float32).unsqueeze(1).to(device) for treat in treat_grid], dim=1)
+            else:
+                fact_grid = torch.cat([torch.tensor(data.get_effect_synt(x.cpu().numpy(), treat.item(), coefs), dtype=torch.float32).unsqueeze(1).to(device) for treat in treat_grid], dim=1)
 
             diff_sq = (fact_grid - pred_grid) ** 2
             batch_size = uv.shape[0]

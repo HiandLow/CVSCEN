@@ -21,6 +21,11 @@ class SCIGAN_Model:
         self.batch_size = params['batch_size']
         self.alpha = params['alpha']
         self.num_dosage_samples = params['num_dosage_samples']
+        self.iterations_gan = params.get('iterations_gan', 5000)
+        self.iterations_inf = params.get('iterations_inf', 10000)
+        self.lr_g = params.get('lr_g', 0.001)
+        self.lr_d = params.get('lr_d', 0.001)
+        self.d_steps = params.get('d_steps', 1)
 
         self.size_z = self.num_treatments * self.num_dosage_samples
         self.num_outcomes = self.num_treatments * self.num_dosage_samples
@@ -243,10 +248,13 @@ class SCIGAN_Model:
         theta_I = tf.trainable_variables(scope='inference')
 
         # %% Solver
-        G_solver = tf.train.AdamOptimizer(learning_rate=0.001).minimize(G_loss, var_list=theta_G)
-        D_dosage_solver = tf.train.AdamOptimizer(learning_rate=0.001).minimize(D_dosage_loss, var_list=theta_D_dosage)
-        D_treatment_solver = tf.train.AdamOptimizer(learning_rate=0.001).minimize(D_treatment_loss,
-                                                                                  var_list=theta_D_treatment)
+        lr_g = getattr(self, 'lr_g', 0.001)
+        lr_d = getattr(self, 'lr_d', 0.001)
+        
+        G_solver = tf.train.AdamOptimizer(learning_rate=lr_g).minimize(G_loss, var_list=theta_G)
+        D_dosage_solver = tf.train.AdamOptimizer(learning_rate=lr_d).minimize(D_dosage_loss, var_list=theta_D_dosage)
+        D_treatment_solver = tf.train.AdamOptimizer(learning_rate=lr_d).minimize(D_treatment_loss, var_list=theta_D_treatment)
+
         I_solver = tf.train.AdamOptimizer(learning_rate=0.001).minimize(I_loss, var_list=theta_I)
 
         # Setup tensorflow
@@ -261,9 +269,12 @@ class SCIGAN_Model:
         self.sess.run(tf.global_variables_initializer())
         self.sess.run(tf.local_variables_initializer())
 
+        iterations_gan = getattr(self, 'iterations_gan', 5000)
+        iterations_inf = getattr(self, 'iterations_inf', 10000)
+
         # Iterations
-        print("Training SCIGAN generator and discriminator.")
-        for it in tqdm(range(5000)):
+        print(f"Training SCIGAN generator and discriminator for {iterations_gan} iterations.")
+        for it in tqdm(range(iterations_gan)):
             for kk in range(2):
                 idx_mb = sample_X(Train_X, self.batch_size)
                 X_mb = Train_X[idx_mb, :]
@@ -289,7 +300,7 @@ class SCIGAN_Model:
                                self.Treatment_Dosage_Mask: treatment_dosage_mask, self.Y: Y_mb,
                                self.Z_G: Z_G_mb})
 
-            for kk in range(1):
+            for kk in range(self.d_steps):
                 idx_mb = sample_X(Train_X, self.batch_size)
                 X_mb = Train_X[idx_mb, :]
                 T_mb = np.reshape(Train_T[idx_mb], [self.batch_size, ])
@@ -355,8 +366,8 @@ class SCIGAN_Model:
                 print()
 
         # Train Inference Network
-        print("Training inference network.")
-        for it in tqdm(range(10000)):
+        print(f"Training inference network for {iterations_inf} iterations.")
+        for it in tqdm(range(iterations_inf)):
             idx_mb = sample_X(Train_X, self.batch_size)
             X_mb = Train_X[idx_mb, :]
             T_mb = np.reshape(Train_T[idx_mb], [self.batch_size, ])

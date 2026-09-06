@@ -35,28 +35,43 @@ def evaluate_model(data, dataset_type='ihdp', tune=None):
         hparams.update(tune)
 
     dim_l = hparams["dim_layer"]
+    bs = hparams.get("batch_size", 64)
+    wd = hparams.get("weight_decay", 1e-3)
 
     dataset = {k: data[k] for k in data.keys()}
     set_train, set_val, set_test, coefs = utils.split_data(dataset, train_size=0.63, val_size=0.27)
-    loader_train, loader_val, loader_test = [DataLoader(ds, batch_size=64, shuffle=is_train) 
+    loader_train, loader_val, loader_test = [DataLoader(ds, batch_size=bs, shuffle=is_train) 
         for ds, is_train in zip([set_train, set_val, set_test], [True, False, False])]
 
+    coef_a, coef_y = coefs[0], coefs[1]
+    oracle_c = ((coef_a != 0) & (coef_y != 0)).float()
+    oracle_p = ((coef_a == 0) & (coef_y != 0)).float()
+    
     info = {
         "dim_x": data['x'].shape[1],
         "dim_a": 1,
         "dim_y": 1,
-        "HSIC_xa": coefs[2]
+        "HSIC_xa": coefs[2],
+        "oracle_c": oracle_c,
+        "oracle_p": oracle_p
     }
 
     selector = model.VSLayer(info, hparams)
     predictor_y = model.POLayer(info, hparams)
-    model_main = model.MainModel(info = {"vsl": selector, "pol": predictor_y}, hparams = {"epoch_total": hparams["epoch_total"]})
+    
+    # Merge info with vsl and pol so MainModel gets dim_x, dim_y, etc.
+    main_info = info.copy()
+    main_info.update({"vsl": selector, "pol": predictor_y})
+    model_main = model.MainModel(info=main_info, hparams=hparams)
     
     param_s = list(selector.parameters())
-    param_p = list(predictor_y.parameters())
+    if hparams.get('use_mlp', False):
+        param_p = list(model_main.mlp.parameters())
+    else:
+        param_p = list(predictor_y.parameters())
 
     optimizer_s = torch.optim.Adam(param_s, lr = hparams["lr_s"])
-    optimizer_p = torch.optim.Adam(param_p, lr = hparams["lr_p"], weight_decay = 1e-3)
+    optimizer_p = torch.optim.Adam(param_p, lr = hparams["lr_p"], weight_decay = wd)
 
     scheduler_s = torch.optim.lr_scheduler.StepLR(optimizer_s, step_size=100, gamma=0.97)
     scheduler_p = torch.optim.lr_scheduler.StepLR(optimizer_p, step_size=100, gamma=0.97)

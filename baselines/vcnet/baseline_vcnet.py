@@ -23,12 +23,15 @@ class VCNetWrapper:
         self.init_lr = kwargs.get('lr', 0.001 if 'Vcnet' in self.model_name else 0.02)
         self.alpha = kwargs.get('alpha', 0.5)
         self.n_epochs = kwargs.get('epoch_total', n_epochs)
+        self.batch_size = kwargs.get('batch_size', 64)
+        self.weight_decay = kwargs.get('weight_decay', 5e-3)
+        self.tr_lr = kwargs.get('tr_lr', 0.001)
 
         # Default cfg
         cfg_density = [(num_features, self.dim, 1, 'relu'), (self.dim, self.dim, 1, 'relu')]
-        num_grid = 10
+        num_grid = kwargs.get('num_grid', 10)
         cfg = [(self.dim, self.dim, 1, 'relu'), (self.dim, 1, 1, 'id')]
-        degree = 2
+        degree = kwargs.get('degree', 2)
         knots = [0.33, 0.66]
         
         if self.model_name in ['Vcnet', 'Vcnet_tr']:
@@ -58,18 +61,18 @@ class VCNetWrapper:
         dataset = TensorDataset(torch.tensor(X, dtype=torch.float32), 
                                 torch.tensor(T, dtype=torch.float32), 
                                 torch.tensor(Y, dtype=torch.float32))
-        loader = DataLoader(dataset, batch_size=471, shuffle=True)
+        loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
         
         # optimizers
         init_lr = self.init_lr
         alpha = self.alpha
         beta = 1.
-        wd = 5e-3
+        wd = self.weight_decay
         momentum = 0.9
         
         optimizer = torch.optim.SGD(self.model.parameters(), lr=init_lr, momentum=momentum, weight_decay=wd, nesterov=True)
         if self.isTargetReg:
-            tr_optimizer = torch.optim.SGD(self.TargetReg.parameters(), lr=0.001, weight_decay=1e-3)
+            tr_optimizer = torch.optim.SGD(self.TargetReg.parameters(), lr=self.tr_lr, weight_decay=wd)
             
         def criterion(out, y, alpha=0.5, epsilon=1e-6):
             return ((out[1].squeeze() - y.squeeze()) ** 2).mean() - alpha * torch.log(out[0] + epsilon).mean()

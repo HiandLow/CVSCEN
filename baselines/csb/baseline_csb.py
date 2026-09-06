@@ -43,17 +43,18 @@ class CSBWrapper:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Hyperparameters (from IBEX main.py defaults)
-        self.batch_size = 64
-        self.n_epochs = kwargs.get('epoch_total', 200) # Usually ~3000 in original paper, but keeping 200 for benchmark fairness
+        self.batch_size = kwargs.get('batch_size', 64)
+        self.n_epochs = kwargs.get('epoch_total', 3000) # CSB typically requires ~3000 epochs to converge
         self.lr = kwargs.get('lr', 1e-3)
+        self.weight_decay = kwargs.get('weight_decay', 1e-4)
         self.beta = kwargs.get('beta', 0.001)
         self.gamma = kwargs.get('gamma', 0.1)
         self.use_attention = True
         self.use_spline = False
         
         # Init model
-        t_dim_latent = 8
-        z_dim = 32  # Used 32 for News/IHDP style, 16 for Mimic
+        t_dim_latent = kwargs.get('t_dim_latent', 8)
+        z_dim = kwargs.get('z_dim', 32)
         hidden_dim = kwargs.get('dim_layer', 512)
         
         self.model = CCS_Counterfactual_Net(
@@ -72,7 +73,7 @@ class CSBWrapper:
         dataset = NumpyDataset(X, T, Y)
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
         
-        optimizer = optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=1e-4)
+        optimizer = optim.AdamW(self.model.parameters(), lr=self.lr, weight_decay=self.weight_decay)
         criterion = nn.MSELoss()
 
         self.model.train()

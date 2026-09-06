@@ -254,13 +254,13 @@ class NeuralNet1k_n10000(NeuralNetk):
         self.epochs = epochs
 
 class NeuralNet1k_emp_app(NeuralNetk):
-    def __init__(self,k,lr=0.01,momentum=0.5,weight_decay=0.2,epochs=100):
+    def __init__(self,k,dim_layer=25,lr=0.01,momentum=0.5,weight_decay=0.2,epochs=100):
         super(NeuralNet1k_emp_app, self).__init__()
         
         self.k = k
         
         self.layer_1 = nn.Sequential()
-        self.layer_1.add_module("L1", nn.Linear(self.k,25))
+        self.layer_1.add_module("L1", nn.Linear(self.k,dim_layer))
         self.layer_1.add_module("R1", nn.ReLU())
         
         # self.layer_2 = nn.Sequential()
@@ -268,7 +268,7 @@ class NeuralNet1k_emp_app(NeuralNetk):
         # self.layer_2.add_module("R2", nn.ReLU())
         
         
-        self.layer_2 = torch.nn.Linear(25,1)       
+        self.layer_2 = torch.nn.Linear(dim_layer,1)       
 
         self.criterion = torch.nn.MSELoss()
         self.optimizer = torch.optim.SGD(self.parameters(), lr=lr,momentum=momentum,weight_decay=weight_decay)
@@ -331,13 +331,13 @@ class NeuralNet2_n1000(NeuralNet):
         self.epochs = epochs      
 
 class NeuralNet2_emp_app(NeuralNet):
-    def __init__(self,k,lr=0.01,momentum=0.5,weight_decay=0.2,epochs=300):
+    def __init__(self,k,dim_layer=25,lr=0.01,momentum=0.5,weight_decay=0.2,epochs=300):
         super(NeuralNet2_emp_app, self).__init__()
         
         self.k = k
         
         self.layer_1 = nn.Sequential()
-        self.layer_1.add_module("L1", nn.Linear(self.k,25))
+        self.layer_1.add_module("L1", nn.Linear(self.k,dim_layer))
         self.layer_1.add_module("R1", nn.ReLU())
         
         # self.layer_2 = nn.Sequential()
@@ -352,7 +352,7 @@ class NeuralNet2_emp_app(NeuralNet):
         # self.layer_4.add_module("L4", nn.Linear(10,10))
         # self.layer_4.add_module("R4", nn.ReLU())
         
-        self.layer_2 = torch.nn.Linear(25,1)       
+        self.layer_2 = torch.nn.Linear(dim_layer,1)       
 
         self.criterion = torch.nn.MSELoss()
         self.optimizer = torch.optim.SGD(self.parameters(), lr=lr,momentum=momentum,weight_decay=weight_decay)

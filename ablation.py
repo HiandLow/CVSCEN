@@ -66,37 +66,69 @@ if __name__ == "__main__":
     dataset_type = args.dataset
 
     cases = [
+        {"name": "w/o Variable Selection", "params": {"disable_vs": True}},
+        {"name": "w/ Simple MLP", "params": {"use_mlp": True}},
+        {"name": "Oracle", "params": {"use_oracle": True}},
         {"name": "w/o HSIC Loss", "params": {"weight_hsic": 0.0}},
         {"name": "w/o Correlation Prior", "params": {"weight_corr": 0.0}},
-        {"name": "w/o Both", "params": {"weight_hsic": 0.0, "weight_corr": 0.0}},
         {"name": "Full Model", "params": {}},
     ]
     
+    cache_path = f"figures/ablation_cache_{dataset_type}.json"
+    os.makedirs("figures", exist_ok=True)
+    
     results = []
+    if os.path.exists(cache_path):
+        with open(cache_path, "r") as f:
+            results = json.load(f)
+            
+    completed_cases = [res['case'] for res in results]
+
     for case in cases:
+        if case['name'] in completed_cases:
+            print(f"Skipping Case: {case['name']} (already completed)")
+            continue
+            
         print(f"Running Case: {case['name']} on {dataset_type} ...")
         res = run_ablation(dataset_type, case['name'], case['params'])
         results.append(res)
         
+        # Save intermediate results (Checkpoint)
+        with open(cache_path, "w") as f:
+            json.dump(results, f)
+            
     output_path = f"figures/ablation_result_{dataset_type}.txt"
-    os.makedirs("figures", exist_ok=True)
+    
+    # Filter results to only keep those currently in 'cases' (e.g. to drop removed cases like w/o Both)
+    active_case_names = [c['name'] for c in cases]
+    results = [r for r in results if r['case'] in active_case_names]
+
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(f"Ablation Study Results on {dataset_type.upper()} Dataset\n")
         f.write("="*60 + "\n")
-        for res in results:
-            f.write(f"[{res['case']}]\n")
-            f.write(f"MISE: {res['mise'][0]:.4f} ± {res['mise'][1]:.4f}\n")
-            f.write(f"ADRFE: {res['adrfe'][0]:.4f} ± {res['adrfe'][1]:.4f}\n")
-            f.write(f"FDR1: {res['fdr1'][0]:.4f} ± {res['fdr1'][1]:.4f}, FDR2: {res['fdr2'][0]:.4f} ± {res['fdr2'][1]:.4f}, FDR3: {res['fdr3'][0]:.4f} ± {res['fdr3'][1]:.4f}\n")
-            f.write(f"TPR1: {res['tpr1'][0]:.4f} ± {res['tpr1'][1]:.4f}, TPR2: {res['tpr2'][0]:.4f} ± {res['tpr2'][1]:.4f}, TPR3: {res['tpr3'][0]:.4f} ± {res['tpr3'][1]:.4f}\n")
+        for r in results:
+            f.write(f"[{r['case']}]\n")
+            f.write(f"MISE: {r['mise'][0]:.4f} ± {r['mise'][1]:.4f}\n")
+            f.write(f"ADRFE: {r['adrfe'][0]:.4f} ± {r['adrfe'][1]:.4f}\n")
+            f.write(f"FDR1: {r['fdr1'][0]:.4f} ± {r['fdr1'][1]:.4f}, FDR2: {r['fdr2'][0]:.4f} ± {r['fdr2'][1]:.4f}, FDR3: {r['fdr3'][0]:.4f} ± {r['fdr3'][1]:.4f}\n")
+            f.write(f"TPR1: {r['tpr1'][0]:.4f} ± {r['tpr1'][1]:.4f}, TPR2: {r['tpr2'][0]:.4f} ± {r['tpr2'][1]:.4f}, TPR3: {r['tpr3'][0]:.4f} ± {r['tpr3'][1]:.4f}\n")
             f.write("-" * 60 + "\n")
             
     print(f"\nAblation study complete. Results saved to {output_path}")
 
     # --- Plotting Logic ---
-    plot_order = ["w/o Both", "w/o HSIC Loss", "w/o Correlation Prior", "Full Model"]
+    plot_order = [
+        "w/o Variable Selection",
+        "w/ Simple MLP",
+        "w/o Correlation Prior",
+        "w/o HSIC Loss",
+        "Oracle",
+        "Full Model"
+    ]
     labels_map = {
-        "w/o Both": "w/o Both", 
+        "w/o Variable Selection": "w/o Var Sel.",
+        "w/ Simple MLP": "w/ MLP",
+        "Oracle": "Oracle",
         "w/o HSIC Loss": "w/o Dep. Guid.", 
         "w/o Correlation Prior": "w/o Ind. Reg.", 
         "Full Model": "Full CVSCEN"
@@ -123,13 +155,13 @@ if __name__ == "__main__":
     tpr_mean = [[r['tpr1'][0] for r in ordered_res], [r['tpr2'][0] for r in ordered_res], [r['tpr3'][0] for r in ordered_res]]
     tpr_std = [[r['tpr1'][1] for r in ordered_res], [r['tpr2'][1] for r in ordered_res], [r['tpr3'][1] for r in ordered_res]]
     
-    fig, axs = plt.subplots(2, 2, figsize=(11, 8.5))
+    fig, axs = plt.subplots(2, 2, figsize=(15, 10))
     x = np.arange(len(models_labels))
     
     def plot_single(ax, means, stds, title, ylabel):
         ax.errorbar(x, means, yerr=stds, fmt='o-', capsize=5, capthick=2, markersize=8, color='#1f77b4', ecolor='#1f77b4', linewidth=2)
         ax.set_xticks(x)
-        ax.set_xticklabels(models_labels)
+        ax.set_xticklabels(models_labels, rotation=30, ha='right')
         ax.set_title(title, fontsize=14, loc='left')
         ax.set_ylabel(ylabel)
         ax.set_xlim(-0.5, len(models_labels)-0.5)
@@ -140,13 +172,13 @@ if __name__ == "__main__":
     def plot_multi(ax, mean_list, std_list, leg_labels, title, ylabel):
         colors = ['#2ca02c', '#ff7f0e', '#d62728']
         markers = ['o', 's', '^']
-        offsets = [-0.05, 0.0, 0.05]
+        offsets = [-0.15, 0.0, 0.15]
         for i in range(3):
             ax.errorbar(x + offsets[i], mean_list[i], yerr=std_list[i], fmt=f'{markers[i]}-', 
                         capsize=4, capthick=1.5, markersize=7, 
                         color=colors[i], ecolor=colors[i], linewidth=2, label=leg_labels[i])
         ax.set_xticks(x)
-        ax.set_xticklabels(models_labels)
+        ax.set_xticklabels(models_labels, rotation=30, ha='right')
         ax.set_title(title, fontsize=14, loc='left')
         ax.set_ylabel(ylabel)
         ax.set_xlim(-0.5, len(models_labels)-0.5)

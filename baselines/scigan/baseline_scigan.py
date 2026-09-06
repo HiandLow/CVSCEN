@@ -36,13 +36,23 @@ class SCIGANWrapper:
         params = {
             'num_features': self.num_features,
             'num_treatments': 1,
-            'num_dosage_samples': 5,
+            'num_dosage_samples': self.hparams.get('num_dosage_samples', 5),
             'export_dir': '',
             'alpha': self.hparams.get('alpha', 1.0),
-            'batch_size': 16, # matching their test_SCIGAN.py
+            'batch_size': self.hparams.get('batch_size', 16),
             'h_dim': dim,
-            'h_inv_eqv_dim': dim
+            'h_inv_eqv_dim': dim,
+            'lr_g': self.hparams.get('lr_g', 0.001),
+            'lr_d': self.hparams.get('lr_d', 0.001),
+            'd_steps': self.hparams.get('d_steps', 1)
         }
+        
+        epochs = self.hparams.get('epoch_total', 400)
+        n_samples = X.shape[0]
+        batch_size = params['batch_size']
+        batches_per_epoch = max(1, n_samples / batch_size)
+        params['iterations_gan'] = int(epochs * batches_per_epoch)
+        params['iterations_inf'] = int(epochs * batches_per_epoch * 2)
         
         self.model = self.SCIGAN_Model_Class(params)
         
@@ -63,7 +73,8 @@ class SCIGANWrapper:
             
         # To predict for dosage T, we create treatment_dosage_samples
         # where we put T at a specific index
-        treatment_dosage_samples = np.zeros([n, 1, 5])
+        num_dosage_samples = self.hparams.get('num_dosage_samples', 5)
+        treatment_dosage_samples = np.zeros([n, 1, num_dosage_samples])
         # put the target T in the 0-th index of dosage samples
         for i in range(n):
             treatment_dosage_samples[i, 0, 0] = T[i]
