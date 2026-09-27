@@ -12,8 +12,28 @@ if current_dir not in sys.path:
 
     sys.path.insert(0, current_dir)
 
-from CCS_divergence import CS
+from CCS_divergence import GaussianMatrix
 from src.networks import CCS_Counterfactual_Net
+
+def cs_qmi(z, t, sigma=1.0):
+    # Empirical CS divergence D_CS(p(z,t) || p(z)p(t)), IBEX paper eq. 26
+    K = GaussianMatrix(z, z, sigma)
+    Q = GaussianMatrix(t, t, sigma)
+    n = K.shape[0]
+    joint = torch.sum(K * Q) / n ** 2
+    marginals = K.sum() * Q.sum() / n ** 4
+    cross = torch.sum(K.sum(dim=0) * Q.sum(dim=1)) / n ** 3
+    return torch.log(joint) + torch.log(marginals) - 2 * torch.log(cross)
+
+def r_dim(z, kappa, eps=1e-3):
+    # Capacity regulariser R_dim(z) = ||z^T||_{2,1} + kappa * logdet(Sigma_z + eps I), IBEX paper eq. 27
+    group = torch.norm(z, dim=0).sum()
+    if kappa == 0:
+        return group
+    zc = z - z.mean(dim=0, keepdim=True)
+    cov = zc.T @ zc / z.shape[0]
+    eye = torch.eye(z.shape[1], device=z.device, dtype=z.dtype)
+    return group + kappa * torch.logdet(cov + eps * eye)
 
 class NumpyDataset(Dataset):
     def __init__(self, X, T, Y=None):
@@ -47,8 +67,10 @@ class CSBWrapper:
         self.n_epochs = kwargs.get('epoch_total', 3000) # CSB typically requires ~3000 epochs to converge
         self.lr = kwargs.get('lr', 1e-3)
         self.weight_decay = kwargs.get('weight_decay', 1e-4)
-        self.beta = kwargs.get('beta', 0.001)
-        self.gamma = kwargs.get('gamma', 0.1)
+        # IBEX eq. 28: beta weights R_dim(z), gamma weights the CS dependence term
+        self.beta = kwargs.get('beta', 0.1)
+        self.gamma = kwargs.get('gamma', 0.001)
+        self.kappa = kwargs.get('kappa', 0.5)
         self.use_attention = True
         self.use_spline = False
         
@@ -86,16 +108,13 @@ class CSBWrapper:
                 # 1) Outcome reconstruction loss
                 loss_y = criterion(y_pred, y)
 
-                # 2) Independence regularisation via Contrastive Score (CS)
-                joint_samples = torch.cat((z, t), dim=1)
-                z_perm = z[torch.randperm(z.size(0))]
-                indep_samples = torch.cat((z_perm, t), dim=1)
-                loss_cs = CS(indep_samples, joint_samples)
+                # 2) Treatment-compression term: CS divergence between p(z,t) and p(z)p(t)
+                loss_cs = cs_qmi(z, t)
 
-                # 3) Latent space regularisation
-                loss_reg = torch.norm(z, dim=0).sum()
+                # 3) Dimensionality bottleneck R_dim(z)
+                loss_reg = r_dim(z, self.kappa)
 
-                loss = loss_y + self.beta * loss_cs + self.gamma * loss_reg
+                loss = loss_y + self.beta * loss_reg + self.gamma * loss_cs
 
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()

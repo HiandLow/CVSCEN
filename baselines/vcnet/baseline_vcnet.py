@@ -26,6 +26,7 @@ class VCNetWrapper:
         self.batch_size = kwargs.get('batch_size', 64)
         self.weight_decay = kwargs.get('weight_decay', 5e-3)
         self.tr_lr = kwargs.get('tr_lr', 0.001)
+        self.tr_wd = kwargs.get('tr_wd', 5e-3)  # original VCNet uses a separate TR weight decay
 
         # Default cfg
         cfg_density = [(num_features, self.dim, 1, 'relu'), (self.dim, self.dim, 1, 'relu')]
@@ -72,7 +73,7 @@ class VCNetWrapper:
         
         optimizer = torch.optim.SGD(self.model.parameters(), lr=init_lr, momentum=momentum, weight_decay=wd, nesterov=True)
         if self.isTargetReg:
-            tr_optimizer = torch.optim.SGD(self.TargetReg.parameters(), lr=self.tr_lr, weight_decay=wd)
+            tr_optimizer = torch.optim.SGD(self.TargetReg.parameters(), lr=self.tr_lr, weight_decay=self.tr_wd)
             
         def criterion(out, y, alpha=0.5, epsilon=1e-6):
             return ((out[1].squeeze() - y.squeeze()) ** 2).mean() - alpha * torch.log(out[0] + epsilon).mean()
@@ -88,7 +89,6 @@ class VCNetWrapper:
                     trg = self.TargetReg(t)
                     loss = criterion(out, y, alpha=alpha) + criterion_TR(out, trg, y, beta=beta)
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                     optimizer.step()
                     
                     tr_optimizer.zero_grad()
@@ -96,14 +96,12 @@ class VCNetWrapper:
                     trg = self.TargetReg(t)
                     tr_loss = criterion_TR(out, trg, y, beta=beta)
                     tr_loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.TargetReg.parameters(), 1.0)
                     tr_optimizer.step()
                 else:
                     optimizer.zero_grad()
                     out = self.model(t, x)
                     loss = criterion(out, y, alpha=alpha)
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                     optimizer.step()
 
     def predict(self, X, T):

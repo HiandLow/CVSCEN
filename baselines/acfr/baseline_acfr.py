@@ -39,7 +39,8 @@ class ACFRWrapper:
             'lr2': kwargs.get('lr_s', 0.05),
             'gamma1': kwargs.get('gamma1', 1),
             'gamma2': kwargs.get('gamma2', 0.2),
-            'm': dim,
+            # Number of noisy latent copies per sample in forward_G (not a layer width)
+            'm': kwargs.get('m', 10),
             'std': kwargs.get('std', 0.2),
             'batch_size': kwargs.get('batch_size', 64),
             'weight_decay': kwargs.get('weight_decay', 0.001),

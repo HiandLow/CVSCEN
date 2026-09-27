@@ -17,7 +17,7 @@ def evaluate_model(data, dataset_type='ihdp', tune=None):
             "lr_s": 1e-2,
             "lr_p": 1e-4,
             "dim_layer": 64,
-            "epoch_total": 1,
+            "epoch_total": 300,
         }
     else:
         hparams = {
@@ -80,8 +80,9 @@ def evaluate_model(data, dataset_type='ihdp', tune=None):
     model_main, _, _ = model.train_model(model_main, optimizer_s, optimizer_p, scheduler_s, scheduler_p, \
                                    loader_train, loader_val, coef_loss_list)
 
-    mise_tr, adrfe_tr, _, _, _, drf_tr = model.evaluate(model_main, loader_train, coefs, dataset_type)
-    mise_te, adrfe_te, fdr_te, tpr_te, c_te, drf_te = model.evaluate(model_main, loader_test, coefs, dataset_type)
+    t_range = (np.percentile(data['a'], 5), np.percentile(data['a'], 95))
+    mise_tr, adrfe_tr, _, _, _, drf_tr = model.evaluate(model_main, loader_train, coefs, dataset_type, t_range=t_range)
+    mise_te, adrfe_te, fdr_te, tpr_te, c_te, drf_te = model.evaluate(model_main, loader_test, coefs, dataset_type, t_range=t_range)
 
     return mise_tr, adrfe_tr, mise_te, adrfe_te, fdr_te, tpr_te, c_te, drf_tr, drf_te
 

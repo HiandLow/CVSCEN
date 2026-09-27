@@ -1,8 +1,9 @@
 __pycache__/
 data/*
 !data/*.py
-tune/
+tune/*
 !tune/*.py
 paper/
 figures/
 .agents/
+*.md

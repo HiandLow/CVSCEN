@@ -300,15 +300,18 @@ import torch
 import matplotlib.pyplot as plt
 from scipy.integrate import romb
 
-def evaluate(model, loader_test, coefs, dataset_type='ihdp', step=100):
+def evaluate(model, loader_test, coefs, dataset_type='ihdp', step=100, t_range=None):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     coef_a, coef_y = coefs[0].to(device), coefs[1].to(device)
     model.to(device)
     model.eval()
 
     with torch.no_grad():
-        all_a = torch.cat([a for _, a, _ in loader_test]).cpu().numpy()
-        t_min, t_max = np.percentile(all_a, 5), np.percentile(all_a, 95)
+        # t_range should be the 5th-95th percentile of the full dataset's treatments (as in compare.py)
+        if t_range is None:
+            all_a = torch.cat([a for _, a, _ in loader_test]).cpu().numpy()
+            t_range = (np.percentile(all_a, 5), np.percentile(all_a, 95))
+        t_min, t_max = t_range
 
         total_mise = 0.0 
         total_samples = 0

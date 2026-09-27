@@ -105,7 +105,7 @@ if __name__ == "__main__":
 
     if args.dataset == "ihdp":
         print("Generating IHDP data...")
-        data_raw = pd.read_csv('VSCEN IHDP/data/ihdp.csv').to_numpy()
+        data_raw = pd.read_csv('data/ihdp.csv').to_numpy()
         X_raw = normalize(data_raw[:, 2:27])
         for i in range(10):
             dataset = generate_ihdp_data(X_raw, seed=i, noise_std=0.5)

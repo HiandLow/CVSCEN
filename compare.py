@@ -125,54 +125,66 @@ if __name__ == "__main__":
         with open(best_hparams_file, "r") as f:
             raw_params = json.load(f)
             
-            # Remap model-specific parameters to override generic ones
-            suffix = f"_{model_type.lower()}"
+            # Map known model-specific parameter suffixes
+            suffixes_to_strip = [f"_{model_type.lower()}", "_vcnet", "_drnet", "_scigan", "_csb", "_ddmlct"]
+            
             for k, v in raw_params.items():
-                if k.endswith(suffix):
-                    tune_params[k.replace(suffix, "")] = v
-            for k, v in raw_params.items():
-                if not k.endswith(suffix) and k not in tune_params:
+                matched_suffix = None
+                for suffix in suffixes_to_strip:
+                    if k.endswith(suffix):
+                        matched_suffix = suffix
+                        # Only apply the parameter if it's for the current model, 
+                        # or if it's DRNet borrowing a VCNet parameter.
+                        if suffix == f"_{model_type.lower()}" or (model_type == 'DRNet' and suffix == '_vcnet'):
+                            tune_params[k.replace(suffix, "")] = v
+                        break
+                
+                # If it doesn't have any known suffix, just add it directly
+                if matched_suffix is None and k not in tune_params:
                     tune_params[k] = v
     else:
         print(f"No tuned hyperparameters found at {best_hparams_file}, using defaults.")
 
-    if model_type == 'Base':
-        model = Base()
-    elif model_type == 'LDML':
-        model = LDML()
-    elif model_type == 'CFDML':
-        model = CFDML()
-    elif model_type == 'LRL':
-        model = LRL()
-    elif model_type == 'VCNet':
-        from baselines.vcnet.baseline_vcnet import VCNetWrapper
-        # Dim = 25 for IHDP, 100 for Synt
-        dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = VCNetWrapper(num_features=dim_x, model_name='Vcnet_tr', **tune_params)
-    elif model_type == 'DRNet':
-        from baselines.vcnet.baseline_vcnet import VCNetWrapper
-        dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = VCNetWrapper(num_features=dim_x, model_name='Drnet_tr', **tune_params)
-    elif model_type == 'SCIGAN':
-        from baselines.scigan.baseline_scigan import SCIGANWrapper
-        dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = SCIGANWrapper(num_features=dim_x, **tune_params)
-    elif model_type == 'DDMLCT':
-        from baselines.ddmlct.baseline_ddmlct import DDMLCTWrapper
-        dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = DDMLCTWrapper(num_features=dim_x, **tune_params)
-    elif model_type == 'GIKS':
-        from baselines.giks.baseline_giks import GIKSWrapper
-        dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = GIKSWrapper(num_features=dim_x, **tune_params)
-    elif model_type == 'ACFR':
-        from baselines.acfr.baseline_acfr import ACFRWrapper
-        dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = ACFRWrapper(num_features=dim_x, **tune_params)
-    elif model_type == 'CSB':
-        from baselines.csb.baseline_csb import CSBWrapper
-        dim_x = 25 if dataset_type == 'ihdp' else 100
-        model = CSBWrapper(num_features=dim_x, **tune_params)
+    def build_model():
+        # Called once per replicate so no weights carry over between datasets
+        if model_type == 'Base':
+            model = Base()
+        elif model_type == 'LDML':
+            model = LDML()
+        elif model_type == 'CFDML':
+            model = CFDML()
+        elif model_type == 'LRL':
+            model = LRL()
+        elif model_type == 'VCNet':
+            from baselines.vcnet.baseline_vcnet import VCNetWrapper
+            # Dim = 25 for IHDP, 100 for Synt
+            dim_x = 25 if dataset_type == 'ihdp' else 100
+            model = VCNetWrapper(num_features=dim_x, model_name='Vcnet_tr', **tune_params)
+        elif model_type == 'DRNet':
+            from baselines.vcnet.baseline_vcnet import VCNetWrapper
+            dim_x = 25 if dataset_type == 'ihdp' else 100
+            model = VCNetWrapper(num_features=dim_x, model_name='Drnet_tr', **tune_params)
+        elif model_type == 'SCIGAN':
+            from baselines.scigan.baseline_scigan import SCIGANWrapper
+            dim_x = 25 if dataset_type == 'ihdp' else 100
+            model = SCIGANWrapper(num_features=dim_x, **tune_params)
+        elif model_type == 'DDMLCT':
+            from baselines.ddmlct.baseline_ddmlct import DDMLCTWrapper
+            dim_x = 25 if dataset_type == 'ihdp' else 100
+            model = DDMLCTWrapper(num_features=dim_x, **tune_params)
+        elif model_type == 'GIKS':
+            from baselines.giks.baseline_giks import GIKSWrapper
+            dim_x = 25 if dataset_type == 'ihdp' else 100
+            model = GIKSWrapper(num_features=dim_x, **tune_params)
+        elif model_type == 'ACFR':
+            from baselines.acfr.baseline_acfr import ACFRWrapper
+            dim_x = 25 if dataset_type == 'ihdp' else 100
+            model = ACFRWrapper(num_features=dim_x, **tune_params)
+        elif model_type == 'CSB':
+            from baselines.csb.baseline_csb import CSBWrapper
+            dim_x = 25 if dataset_type == 'ihdp' else 100
+            model = CSBWrapper(num_features=dim_x, **tune_params)
+        return model
 
     mise_in_list = []
     mise_out_list = []
@@ -199,6 +211,7 @@ if __name__ == "__main__":
                 else:
                     raise
 
+        model = build_model()
         mise_in, adrfe_in, mise_out, adrfe_out, f_out, p_out = evaluate(model, loaded_data, dataset_type)
         mise_in_list.append(mise_in)
         adrfe_in_list.append(adrfe_in)
@@ -217,6 +230,10 @@ if __name__ == "__main__":
 
     print(f"[{model_type} - {dataset_type}] Average In-Sample over all iterations\nmise: {avg_mise_in:.4f} ± {std_mise_in:.4f}, adrfe: {avg_adrfe_in:.4f} ± {std_adrfe_in:.4f}")
     print(f"[{model_type} - {dataset_type}] Average Out-Sample over all iterations\nmise: {avg_mise_out:.4f} ± {std_mise_out:.4f}, adrfe: {avg_adrfe_out:.4f} ± {std_adrfe_out:.4f}")
+
+    if model_type == 'DDMLCT':
+        print("[DDMLCT] Note: DDMLCT estimates only the population ADRF and predicts the same curve for every unit, "
+              "so its MISE is not an individual-level estimate. Compare it on ADRF error only.")
 
     grid_size = 2 ** 6 + 1
     t_min, t_max = np.percentile(loaded_data['a'], 5), np.percentile(loaded_data['a'], 95)

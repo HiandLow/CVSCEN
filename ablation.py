@@ -129,8 +129,8 @@ if __name__ == "__main__":
         "w/o Variable Selection": "w/o Var Sel.",
         "w/ Simple MLP": "w/ MLP",
         "Oracle": "Oracle",
-        "w/o HSIC Loss": "w/o Dep. Guid.", 
-        "w/o Correlation Prior": "w/o Ind. Reg.", 
+        "w/o HSIC Loss": "w/o HSIC Loss", 
+        "w/o Correlation Prior": "w/o Corr. Prior", 
         "Full Model": "Full CVSCEN"
     }
     
@@ -155,15 +155,16 @@ if __name__ == "__main__":
     tpr_mean = [[r['tpr1'][0] for r in ordered_res], [r['tpr2'][0] for r in ordered_res], [r['tpr3'][0] for r in ordered_res]]
     tpr_std = [[r['tpr1'][1] for r in ordered_res], [r['tpr2'][1] for r in ordered_res], [r['tpr3'][1] for r in ordered_res]]
     
-    fig, axs = plt.subplots(2, 2, figsize=(15, 10))
+    plt.rcParams.update({'font.size': 14, 'axes.labelsize': 16, 'xtick.labelsize': 14, 'ytick.labelsize': 14})
+    fig, axs = plt.subplots(2, 2, figsize=(15, 11))
     x = np.arange(len(models_labels))
     
     def plot_single(ax, means, stds, title, ylabel):
         ax.errorbar(x, means, yerr=stds, fmt='o-', capsize=5, capthick=2, markersize=8, color='#1f77b4', ecolor='#1f77b4', linewidth=2)
         ax.set_xticks(x)
         ax.set_xticklabels(models_labels, rotation=30, ha='right')
-        ax.set_title(title, fontsize=14, loc='left')
-        ax.set_ylabel(ylabel)
+        ax.set_title(title, fontsize=18, loc='left', fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=16)
         ax.set_xlim(-0.5, len(models_labels)-0.5)
         ax.set_ylim(bottom=0.0)
         ax.grid(True, linestyle='--', alpha=0.7)
@@ -179,13 +180,13 @@ if __name__ == "__main__":
                         color=colors[i], ecolor=colors[i], linewidth=2, label=leg_labels[i])
         ax.set_xticks(x)
         ax.set_xticklabels(models_labels, rotation=30, ha='right')
-        ax.set_title(title, fontsize=14, loc='left')
-        ax.set_ylabel(ylabel)
+        ax.set_title(title, fontsize=18, loc='left', fontweight='bold')
+        ax.set_ylabel(ylabel, fontsize=16)
         ax.set_xlim(-0.5, len(models_labels)-0.5)
         ax.set_ylim(-0.1, 1.1)
         ax.grid(True, linestyle='--', alpha=0.7)
         ax.set_facecolor('#f7f7f7')
-        ax.legend(loc='best')
+        ax.legend(loc='best', fontsize=14)
         
     plot_single(axs[0, 0], mise_mean, mise_std, "(a) MISE", "Estimation error")
     plot_single(axs[0, 1], adrfe_mean, adrfe_std, "(b) ADRF Error", "Estimation error")

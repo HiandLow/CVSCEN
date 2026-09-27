@@ -20,9 +20,10 @@ try:
 except ImportError:
     pass
     
-def split_data(data, train_size=0.63, val_size=0.27):
+def split_data(data, train_size=0.63, val_size=0.27, seed=42):
+    # Same seeded permutation as compare.py / tune_baselines.py so every method shares one split
     n = data['x'].shape[0]
-    indices = np.random.permutation(n)
+    indices = np.random.RandomState(seed).permutation(n)
     train_end = int(train_size * n)
     val_end = train_end + int(val_size * n)
     data_keys = ['x', 'a', 'yf']
