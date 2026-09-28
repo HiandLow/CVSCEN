@@ -1,4 +1,3 @@
-import torch
 from torch.utils.data import DataLoader
 import pickle
 import numpy as np
@@ -8,103 +7,101 @@ import model
 import utils
 
 def evaluate_model(data, dataset_type='ihdp', tune=None):
-    if dataset_type == 'ihdp':
-        hparams = {
-            "weight_hsic": 0.25,
-            "coef_loss_c": 0.25,
-            "coef_loss_p": 0.25,
-            "weight_corr": 50.0,
-            "lr_s": 1e-2,
-            "lr_p": 1e-4,
-            "dim_layer": 64,
-            "epoch_total": 300,
-        }
-    else:
-        hparams = {
-            "weight_hsic": 0.25,
-            "coef_loss_c": 1.15,
-            "coef_loss_p": 0.75,
-            "weight_corr": 0.25,
-            "lr_s": 1e-2,
-            "lr_p": 1e-4,
-            "dim_layer": 256,
-            "epoch_total": 300,
-        }
+    hparams = {
+        "selector": "role",
+        "weight_hsic": 1.0,
+        "coef_loss_c": 0.1,
+        "coef_loss_p": 0.1,
+        "weight_corr": 5.0,
+        "weight_treat": 1.0,
+        "coef_loss_y": 0.1,
+        "coef_loss_a": 0.1,
+        "init_logit": 1.0,
+        "lr_s": 1e-2,
+        "lr_p": 1e-3,
+        "dim_layer": 64 if dataset_type == 'ihdp' else 128,
+        "epoch_total": 300,
+    }
 
     if tune:
         hparams.update(tune)
 
-    dim_l = hparams["dim_layer"]
     bs = hparams.get("batch_size", 64)
-    wd = hparams.get("weight_decay", 1e-3)
 
     dataset = {k: data[k] for k in data.keys()}
     set_train, set_val, set_test, coefs = utils.split_data(dataset, train_size=0.63, val_size=0.27)
-    loader_train, loader_val, loader_test = [DataLoader(ds, batch_size=bs, shuffle=is_train) 
+    loader_train, loader_val, loader_test = [DataLoader(ds, batch_size=bs, shuffle=is_train)
         for ds, is_train in zip([set_train, set_val, set_test], [True, False, False])]
 
     coef_a, coef_y = coefs[0], coefs[1]
-    oracle_c = ((coef_a != 0) & (coef_y != 0)).float()
-    oracle_p = ((coef_a == 0) & (coef_y != 0)).float()
-    
     info = {
         "dim_x": data['x'].shape[1],
         "dim_a": 1,
         "dim_y": 1,
-        "HSIC_xa": coefs[2],
-        "oracle_c": oracle_c,
-        "oracle_p": oracle_p
+        "oracle_c": ((coef_a != 0) & (coef_y != 0)).float(),
+        "oracle_p": ((coef_a == 0) & (coef_y != 0)).float()
     }
+    if hparams["selector"] == "role":
+        info["HSIC_xa"] = utils.train_hsic(set_train)
 
-    selector = model.VSLayer(info, hparams)
-    predictor_y = model.POLayer(info, hparams)
-    
-    # Merge info with vsl and pol so MainModel gets dim_x, dim_y, etc.
-    main_info = info.copy()
-    main_info.update({"vsl": selector, "pol": predictor_y})
-    model_main = model.MainModel(info=main_info, hparams=hparams)
-    
-    param_s = list(selector.parameters())
-    if hparams.get('use_mlp', False):
-        param_p = list(model_main.mlp.parameters())
-    else:
-        param_p = list(predictor_y.parameters())
-
-    optimizer_s = torch.optim.Adam(param_s, lr = hparams["lr_s"])
-    optimizer_p = torch.optim.Adam(param_p, lr = hparams["lr_p"], weight_decay = wd)
-
-    scheduler_s = torch.optim.lr_scheduler.StepLR(optimizer_s, step_size=100, gamma=0.97)
-    scheduler_p = torch.optim.lr_scheduler.StepLR(optimizer_p, step_size=100, gamma=0.97)
-
-    coef_loss_list = [hparams["weight_hsic"], hparams["coef_loss_c"], hparams["coef_loss_p"]]
-    model_main, _, _ = model.train_model(model_main, optimizer_s, optimizer_p, scheduler_s, scheduler_p, \
-                                   loader_train, loader_val, coef_loss_list)
+    model_main, optimizer_s, optimizer_p, scheduler_s, scheduler_p, coef_loss = model.build(info, hparams)
+    model_main, _, _ = model.train_model(model_main, optimizer_s, optimizer_p, scheduler_s, scheduler_p,
+                                         loader_train, loader_val, coef_loss)
 
     t_range = (np.percentile(data['a'], 5), np.percentile(data['a'], 95))
-    mise_tr, adrfe_tr, _, _, _, drf_tr = model.evaluate(model_main, loader_train, coefs, dataset_type, t_range=t_range)
-    mise_te, adrfe_te, fdr_te, tpr_te, c_te, drf_te = model.evaluate(model_main, loader_test, coefs, dataset_type, t_range=t_range)
+    mise_tr, adrfe_tr, _, _, _, drf_tr = model.evaluate(model_main, loader_train, coefs, dataset_type, t_range=t_range, x_ref=data['x'])
+    mise_te, adrfe_te, fdr_te, tpr_te, c_te, drf_te = model.evaluate(model_main, loader_test, coefs, dataset_type, t_range=t_range, x_ref=data['x'])
 
     return mise_tr, adrfe_tr, mise_te, adrfe_te, fdr_te, tpr_te, c_te, drf_tr, drf_te
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--dataset', type=str, default='ihdp', choices=['ihdp', 'synt'])
+    parser.add_argument('--selector', type=str, default=None, choices=['role', 'two_gate'],
+                        help="Override the selector; by default it comes from the tuned file (else 'role')")
+    parser.add_argument('--guidance', type=str, default=None, choices=['penalty', 'logit'],
+                        help="Override the guidance of the role selector")
+    parser.add_argument('--hparams', type=str, default=None,
+                        help="Tuned hyperparameter JSON to load (default: tune/best_hparams_CVSCEN_{dataset}[_two_gate].json)")
     args = parser.parse_args()
     dataset_type = args.dataset
 
     import os
     import json
-    tune_params = None
-    best_hparams_file = os.path.join("tune", f"best_hparams_CVSCEN_{dataset_type}.json")
-    if os.path.exists(best_hparams_file):
+    if args.hparams:
+        candidates = [args.hparams]
+    elif args.selector == 'two_gate':
+        candidates = [os.path.join("tune", f"best_hparams_CVSCEN_{dataset_type}_two_gate.json"),
+                      os.path.join("tune", f"best_hparams_CVSCEN_{dataset_type}.json")]
+    else:
+        candidates = [os.path.join("tune", f"best_hparams_CVSCEN_{dataset_type}.json")]
+    best_hparams_file = next((c for c in candidates if os.path.exists(c)), None)
+
+    tune_params = {}
+    if best_hparams_file:
         print(f"Loading tuned hyperparameters from {best_hparams_file}...")
         with open(best_hparams_file, "r") as f:
             tune_params = json.load(f)
-            # Backward compatibility for old JSON files
             if "coef_loss_u" in tune_params:
                 tune_params["coef_loss_c"] = tune_params.pop("coef_loss_u")
             if "coef_loss_v" in tune_params:
                 tune_params["coef_loss_p"] = tune_params.pop("coef_loss_v")
+    elif args.hparams:
+        raise FileNotFoundError(args.hparams)
+    else:
+        print("No tuned hyperparameter file found; using the defaults in evaluate_model.")
+
+    tuned_selector = tune_params.get("selector")
+    if args.selector:
+        tune_params["selector"] = args.selector
+    if args.guidance:
+        tune_params["guidance"] = args.guidance
+    selector = tune_params.get("selector", "role")
+    if tuned_selector is not None and selector != tuned_selector:
+        print(f"Note: {best_hparams_file} was tuned for selector '{tuned_selector}'; "
+              f"'{selector}'-specific settings fall back to the defaults in evaluate_model.")
+    print(f"Selector: {selector}" + (f", guidance: {tune_params.get('guidance', 'penalty')}" if selector == 'role' else ""))
+    run_tag = "" if selector == 'role' else f"_{selector}"
 
     mise_tr_list = []
     mise_te_list = []
@@ -125,6 +122,7 @@ if __name__ == "__main__":
     c_cp_te_list = np.zeros(num_features, dtype=int)
 
     for i in range(10):
+        utils.set_seed(i)
         data_name = f'./data/ihdp_semi_{i}.pkl' if dataset_type == 'ihdp' else f'./data/cont_synthetic_{i}.pkl'
         with open(data_name, 'rb') as file:
             data = pickle.load(file)
@@ -182,6 +180,6 @@ TPR1: {:.4f} ± {:.4f}, TPR2: {:.4f} ± {:.4f} TPR3: {:.4f} ± {:.4f}".format(
         avg_fdr1_te, std_fdr1_te, avg_fdr2_te, std_fdr2_te, avg_fdr3_te, std_fdr3_te, 
         avg_tpr1_te, std_tpr1_te, avg_tpr2_te, std_tpr2_te, avg_tpr3_te, std_tpr3_te))
     
-    utils.plot_curve(data['x'].shape[1], c_c_te_list, c_p_te_list, str(np.sum(c_c_te_list)), str(np.sum(c_p_te_list)), "Each")
-    utils.plot_curve(data['x'].shape[1], c_cp_te_list, np.zeros_like(c_cp_te_list), str(np.sum(c_cp_te_list)), "0", "Union")
-    utils.plot_drf(t_axis_te, avg_fact_te, avg_pred_te, f"cvscen_{dataset_type}")
+    utils.plot_curve(data['x'].shape[1], c_c_te_list, c_p_te_list, str(np.sum(c_c_te_list)), str(np.sum(c_p_te_list)), "Each" + run_tag)
+    utils.plot_curve(data['x'].shape[1], c_cp_te_list, np.zeros_like(c_cp_te_list), str(np.sum(c_cp_te_list)), "0", "Union" + run_tag)
+    utils.plot_drf(t_axis_te, avg_fact_te, avg_pred_te, f"cvscen_{dataset_type}{run_tag}")

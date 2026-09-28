@@ -9,7 +9,6 @@ class VCNetWrapper:
         self.model_name = model_name
         self.n_epochs = n_epochs
         
-        # Add original VCNet directory to path to import their models
         current_dir = os.path.dirname(os.path.abspath(__file__))
         if current_dir not in sys.path:
             sys.path.insert(0, current_dir)
@@ -26,9 +25,8 @@ class VCNetWrapper:
         self.batch_size = kwargs.get('batch_size', 64)
         self.weight_decay = kwargs.get('weight_decay', 5e-3)
         self.tr_lr = kwargs.get('tr_lr', 0.001)
-        self.tr_wd = kwargs.get('tr_wd', 5e-3)  # original VCNet uses a separate TR weight decay
+        self.tr_wd = kwargs.get('tr_wd', 5e-3)
 
-        # Default cfg
         cfg_density = [(num_features, self.dim, 1, 'relu'), (self.dim, self.dim, 1, 'relu')]
         num_grid = kwargs.get('num_grid', 10)
         cfg = [(self.dim, self.dim, 1, 'relu'), (self.dim, 1, 1, 'id')]
@@ -45,7 +43,8 @@ class VCNetWrapper:
         
         self.isTargetReg = 1 if '_tr' in self.model_name else 0
         if self.isTargetReg:
-            tr_knots = list(np.arange(0.05, 1, 0.05))
+            n_tr_knots = kwargs.get('tr_knots', 19)
+            tr_knots = list(np.linspace(0, 1, n_tr_knots + 2)[1:-1])
             tr_degree = 2
             self.TargetReg = TR(tr_degree, tr_knots)
             self.TargetReg._initialize_weights()
@@ -64,7 +63,6 @@ class VCNetWrapper:
                                 torch.tensor(Y, dtype=torch.float32))
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
         
-        # optimizers
         init_lr = self.init_lr
         alpha = self.alpha
         beta = 1.

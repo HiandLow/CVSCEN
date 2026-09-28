@@ -8,35 +8,18 @@ import torch.nn.functional as F
 
 
 class GIKSWrapper:
-    """
-    Wrapper for the GIKS (Gradient Interpolation and Kernel Smoothing) model
-    from Nagalapatti et al., AAAI 2024.
-
-    Follows run_GIKS in continuous/main_helper.py with its default config
-    (GP_UNF_T=True, BTM_K_VAR=SM, GP_KERNEL=cosine, CTR_SAMPLING_DIST=uniform):
-    1. Factual pre-training of a VCNet backbone
-    2. Factual loss + gp_lambda * (GI loss for near counterfactual dosages
-       + kernel-smoothing (GP) loss for far ones)
-    The best epoch by validation RMSE on a held-out slice of the training data
-    is restored, as the original's early stopping does (val_pc=0.3).
-    """
     def __init__(self, num_features, **kwargs):
         self.num_features = num_features
         self.hparams = kwargs
 
-        # Setup paths
         current_dir = os.path.dirname(os.path.abspath(__file__))
         giks_dir = current_dir
 
-        # Temporarily swap sys.modules to avoid 'utils' collision
-        # Our project has utils.py, GIKS has utils/ package
         saved_modules = {}
         for key in list(sys.modules.keys()):
             if key == 'utils' or key.startswith('utils.'):
                 saved_modules[key] = sys.modules.pop(key)
 
-        # Also temporarily remove our project dir from sys.path head
-        # so that GIKS's utils/ package is found first
         project_dir = os.path.dirname(os.path.abspath(__file__))
         path_was_first = (sys.path[0] == project_dir) if sys.path else False
         if project_dir in sys.path:
@@ -45,31 +28,25 @@ class GIKSWrapper:
         if giks_dir not in sys.path:
             sys.path.insert(0, giks_dir)
 
-        # Patch the device function BEFORE importing anything else
         import utils.common_utils as cu
         self._device = "cuda:0" if torch.cuda.is_available() else "cpu"
         cu.get_device = lambda: self._device
 
-        # Import the model architecture
         import continuous.dynamic_net as DNet
         import constants as giks_constants
 
         self.DNet = DNet
         self.C = giks_constants
 
-        # Restore project dir to sys.path
         if project_dir not in sys.path:
             if path_was_first:
                 sys.path.insert(0, project_dir)
             else:
                 sys.path.append(project_dir)
 
-        # Restore our utils module (but keep GIKS utils cached too under different keys)
         for key, mod in saved_modules.items():
             sys.modules[key] = mod
 
-    # ---- Ported from continuous/main_helper.py: sample_linear_delta, GI_reg_loss,
-    # ---- sample_far_dosages (uniform), GP_loss (BTM_K_VAR=SM), GP_unf_loss
 
     def _sample_linear_delta(self, dosage, num_samples, linear_delta):
         delta_samples = torch.empty(len(dosage), num_samples, device=self._device,
@@ -92,15 +69,11 @@ class GIKSWrapper:
         return nn.MSELoss()(gi_tgt_y, ypreds_taylor)
 
     def _sample_far_dosages(self, dosage, linear_delta):
-        # Uniform over [0, 1] outside the +/- linear_delta window around the factual dosage
-        sampled = []
-        for d in dosage.tolist():
-            lo, hi = min(max(0, d - linear_delta), 1), min(max(0, d + linear_delta), 1)
-            s = np.random.uniform(0, 1 - (hi - lo))
-            if s > hi:  # same shift rule as the original
-                s += hi - lo
-            sampled.append(s)
-        return torch.tensor(sampled, device=self._device, dtype=torch.float64)
+        lo = (dosage - linear_delta).clamp(0, 1)
+        hi = (dosage + linear_delta).clamp(0, 1)
+        width = hi - lo
+        s = torch.rand(len(dosage), device=self._device, dtype=torch.float64) * (1 - width)
+        return torch.where(s > hi, s + width, s)
 
     def _gp_loss(self, model, batch_dosage_f, batch_emb, trn_dosages, trn_ys, trn_embs,
                  gi_linear_delta, gp_linear_delta, sm_temp):
@@ -112,7 +85,6 @@ class GIKSWrapper:
             for i in range(len(far_dosage_CF)):
                 nnd_ids = torch.where(diff[i] < gp_linear_delta)[0]
                 if len(nnd_ids) == 0:
-                    # The original produces NaN here; skip such samples instead
                     continue
                 nnd_emb, nnd_y = trn_embs[nnd_ids], trn_ys[nnd_ids]
                 ymean = torch.mean(nnd_y)
@@ -129,7 +101,6 @@ class GIKSWrapper:
         keep = torch.tensor(keep, device=self._device)
         means, variances = torch.stack(means).view(-1), torch.stack(variances).view(-1)
         out_cf = model.forward_with_emb(dosage=far_dosage_CF[keep], x_emb=batch_emb[keep])
-        # Softmax over negated GP variances: low-variance targets get more weight
         weight = F.softmax(-variances / sm_temp, dim=0)
         return torch.sum(weight * (out_cf[1].view(-1) - means) ** 2)
 
@@ -148,14 +119,8 @@ class GIKSWrapper:
         return loss
 
     def fit(self, X, T, Y):
-        """
-        X: numpy array (n, d) - covariates
-        T: numpy array (n,) - treatments in [0,1]
-        Y: numpy array (n,) - outcomes
-        """
         dev, f64 = self._device, torch.float64
 
-        # Hold out a validation slice for best-epoch selection (original: val_pc=0.3)
         val_frac = self.hparams.get('val_frac', 0.3)
         perm = np.random.permutation(len(X))
         n_val = int(np.floor(len(X) * val_frac))
@@ -176,7 +141,6 @@ class GIKSWrapper:
         model._initialize_weights()
         model.to(dev, dtype=f64)
 
-        # Defaults from continuous/config.py GIKS_ARGS
         lr = self.hparams.get('lr', 1e-2)
         wd = self.hparams.get('weight_decay', 5e-3)
         num_epochs = self.hparams.get('epoch_total', 400)
@@ -185,7 +149,6 @@ class GIKSWrapper:
         gi_linear_delta = self.hparams.get('gi_linear_delta', 0.05)
         gp_linear_delta = self.hparams.get('gp_linear_delta', 0.1)
         sm_temp = self.hparams.get('sm_temp', 0.5)
-        # Original: factual pre-training, then GI+KS; the split is kept proportional to epoch_total
         pretrain_epochs = int(num_epochs * self.hparams.get('pretrain_frac', 0.5))
 
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
@@ -203,7 +166,6 @@ class GIKSWrapper:
                 batch_y = trn_ys[batch_ids]
 
                 optimizer.zero_grad()
-                # As in the original, embeddings for the whole training set are recomputed every step
                 trn_out = model.forward(dosage=trn_dosages, x=trn_xs, **return_emb)
                 trn_embs, trn_y_preds = trn_out[2], trn_out[1]
                 batch_emb = trn_embs[batch_ids]
@@ -229,9 +191,6 @@ class GIKSWrapper:
         self.model = model
 
     def predict(self, X, T):
-        """
-        Predict outcomes for given X and T.
-        """
         self.model.eval()
         with torch.no_grad():
             X_t = torch.tensor(X, dtype=torch.float64).to(self._device)

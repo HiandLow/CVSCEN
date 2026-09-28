@@ -1,33 +1,17 @@
+import random
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.feature_selection import mutual_info_regression
 import torch
+import ignite.metrics
+from scipy.integrate import romb
 
-try:
-    import ignite.metrics
-    import ignite
-    
-    class GradientReversalFunction(torch.autograd.Function):
-        def forward(ctx, x, lambda_):
-            ctx.lambda_ = lambda_
-            return x.clone()
-    
-        def backward(ctx, grads):
-            lambda_ = ctx.lambda_
-            lambda_ = grads.new_tensor(lambda_)
-            dx = -lambda_ * grads
-            return dx, None
-except ImportError:
-    pass
-    
 def split_data(data, train_size=0.63, val_size=0.27, seed=42):
-    # Same seeded permutation as compare.py / tune_baselines.py so every method shares one split
     n = data['x'].shape[0]
     indices = np.random.RandomState(seed).permutation(n)
     train_end = int(train_size * n)
     val_end = train_end + int(val_size * n)
     data_keys = ['x', 'a', 'yf']
-    coef_keys = ["treat_coef", "out_coef", "HSIC"]
+    coef_keys = ["treat_coef", "out_coef"]
 
     def make_dataset(idxs, is_data = True):
         if is_data:
@@ -50,6 +34,23 @@ def HSIC(x, a):
         hsic.update((x[idx : idx + batch_size], a[idx : idx + batch_size]))
 
     return hsic.compute()
+
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+def train_hsic(set_train):
+    x, a = set_train.tensors[0].numpy(), set_train.tensors[1].numpy().reshape(-1, 1)
+    scores = [HSIC(x[:, j], a) for j in range(x.shape[1])]
+    return torch.tensor(np.nan_to_num(np.array(scores, dtype=np.float64)), dtype=torch.float32)
+
+def curve_error(pred_grid, target_grid, dx, adrf_only=False):
+    if adrf_only:
+        return np.sqrt(romb((target_grid.mean(axis=0) - pred_grid.mean(axis=0)) ** 2, dx=dx))
+    diff_sq = (target_grid - pred_grid) ** 2
+    return np.sqrt(np.mean([romb(diff_sq[i], dx=dx) for i in range(len(diff_sq))]))
 
 def FDR(select, coef_a, coef_y, is_confounder):
     if torch.sum(select) == 0:

@@ -3,23 +3,27 @@ import json
 import pickle
 import numpy as np
 import execute
+import utils
 import argparse
 import matplotlib.pyplot as plt
 
-def run_ablation(dataset_type, case_name, hparams_override):
-    # Load tuned hparams
+def load_tuned(best_hparams_file):
     tune_params = {}
-    best_hparams_file = os.path.join("tune", f"best_hparams_CVSCEN_{dataset_type}.json")
     if os.path.exists(best_hparams_file):
         with open(best_hparams_file, "r") as f:
             tune_params = json.load(f)
-            # Backward compatibility
             if "coef_loss_u" in tune_params:
                 tune_params["coef_loss_c"] = tune_params.pop("coef_loss_u")
             if "coef_loss_v" in tune_params:
                 tune_params["coef_loss_p"] = tune_params.pop("coef_loss_v")
-                
-    # Override with ablation parameters
+    return tune_params
+
+def run_ablation(dataset_type, case_name, hparams_override, hparams_file=None):
+    main_file = os.path.join("tune", f"best_hparams_CVSCEN_{dataset_type}.json")
+    if hparams_file is not None and not os.path.exists(hparams_file):
+        print(f"[{case_name}] {hparams_file} not found; using {main_file} (not separately tuned)")
+        hparams_file = None
+    tune_params = load_tuned(hparams_file or main_file)
     tune_params.update(hparams_override)
     
     mise_te_list = []
@@ -32,6 +36,7 @@ def run_ablation(dataset_type, case_name, hparams_override):
     tpr3_list = []
     
     for i in range(10):
+        utils.set_seed(i)
         data_name = f'./data/ihdp_semi_{i}.pkl' if dataset_type == 'ihdp' else f'./data/cont_synthetic_{i}.pkl'
         with open(data_name, 'rb') as file:
             data = pickle.load(file)
@@ -65,15 +70,28 @@ if __name__ == "__main__":
     args = parser.parse_args()
     dataset_type = args.dataset
 
+    main_params = load_tuned(os.path.join("tune", f"best_hparams_CVSCEN_{dataset_type}.json"))
+    tuned_file = lambda suffix: os.path.join("tune", f"best_hparams_CVSCEN_{dataset_type}_{suffix}.json")
     cases = [
-        {"name": "w/o Variable Selection", "params": {"disable_vs": True}},
-        {"name": "w/ Simple MLP", "params": {"use_mlp": True}},
-        {"name": "Oracle", "params": {"use_oracle": True}},
-        {"name": "w/o HSIC Loss", "params": {"weight_hsic": 0.0}},
-        {"name": "w/o Correlation Prior", "params": {"weight_corr": 0.0}},
-        {"name": "Full Model", "params": {}},
+        {"name": "w/o Variable Selection", "label": "w/o Var Sel.", "params": {"disable_vs": True}},
+        {"name": "w/ Simple MLP", "label": "w/ MLP", "params": {"use_mlp": True}},
+        {"name": "Oracle", "label": "Oracle", "params": {"use_oracle": True}},
     ]
-    
+    if main_params.get("selector", "role") == "two_gate":
+        cases += [
+            {"name": "w/o Treatment Head", "label": "w/o Treat. Head", "params": {"weight_treat": 0.0}},
+            {"name": "Role Selector", "label": "Role sel.", "params": {"selector": "role"}, "hparams_file": tuned_file("role")},
+        ]
+    else:
+        other_guidance = "logit" if main_params.get("guidance", "penalty") == "penalty" else "penalty"
+        cases += [
+            {"name": "w/o HSIC Loss", "label": "w/o HSIC Loss", "params": {"weight_hsic": 0.0}},
+            {"name": "w/o Correlation Prior", "label": "w/o Corr. Prior", "params": {"weight_corr": 0.0}},
+            {"name": f"{other_guidance.capitalize()} Guidance", "label": f"{other_guidance.capitalize()} guid.",
+             "params": {"guidance": other_guidance}, "hparams_file": tuned_file(other_guidance)},
+        ]
+    cases.append({"name": "Full Model", "label": "Full CVSCEN", "params": {}})
+
     cache_path = f"figures/ablation_cache_{dataset_type}.json"
     os.makedirs("figures", exist_ok=True)
     
@@ -90,16 +108,14 @@ if __name__ == "__main__":
             continue
             
         print(f"Running Case: {case['name']} on {dataset_type} ...")
-        res = run_ablation(dataset_type, case['name'], case['params'])
+        res = run_ablation(dataset_type, case['name'], case['params'], case.get('hparams_file'))
         results.append(res)
         
-        # Save intermediate results (Checkpoint)
         with open(cache_path, "w") as f:
             json.dump(results, f)
             
     output_path = f"figures/ablation_result_{dataset_type}.txt"
     
-    # Filter results to only keep those currently in 'cases' (e.g. to drop removed cases like w/o Both)
     active_case_names = [c['name'] for c in cases]
     results = [r for r in results if r['case'] in active_case_names]
 
@@ -116,24 +132,9 @@ if __name__ == "__main__":
             
     print(f"\nAblation study complete. Results saved to {output_path}")
 
-    # --- Plotting Logic ---
-    plot_order = [
-        "w/o Variable Selection",
-        "w/ Simple MLP",
-        "w/o Correlation Prior",
-        "w/o HSIC Loss",
-        "Oracle",
-        "Full Model"
-    ]
-    labels_map = {
-        "w/o Variable Selection": "w/o Var Sel.",
-        "w/ Simple MLP": "w/ MLP",
-        "Oracle": "Oracle",
-        "w/o HSIC Loss": "w/o HSIC Loss", 
-        "w/o Correlation Prior": "w/o Corr. Prior", 
-        "Full Model": "Full CVSCEN"
-    }
-    
+    plot_order = [c["name"] for c in cases]
+    labels_map = {c["name"]: c["label"] for c in cases}
+
     ordered_res = []
     for name in plot_order:
         for res in results:

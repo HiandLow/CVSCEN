@@ -1,4 +1,3 @@
-# Lazy imports are used to avoid dependency issues when running in different environments
 import numpy as np
 import pickle
 from scipy.integrate import romb
@@ -91,11 +90,7 @@ def evaluate(model, data_dict, dataset_type, train_size=0.63, val_size=0.27):
         pred_list = [model.predict(x_set, treat) for treat in treat_grid]
         pred_grid = np.column_stack(pred_list)
 
-        if dataset_type == 'ihdp':
-            fact_list = [data.get_effect_ihdp(x_set, treat, coefs) for treat in treat_grid]
-        else:
-            fact_list = [data.get_effect_synt(x_set, treat, coefs) for treat in treat_grid]
-        fact_grid = np.column_stack(fact_list)
+        fact_grid = data.true_curves(x_set, treat_grid, dataset_type, coefs, X_ref=data_dict['x'])
 
         diff_sq = (fact_grid - pred_grid) ** 2
         mise = np.mean([romb(diff_sq[idx], dx=dx) for idx in range(x_set.shape[0])])
@@ -125,7 +120,6 @@ if __name__ == "__main__":
         with open(best_hparams_file, "r") as f:
             raw_params = json.load(f)
             
-            # Map known model-specific parameter suffixes
             suffixes_to_strip = [f"_{model_type.lower()}", "_vcnet", "_drnet", "_scigan", "_csb", "_ddmlct"]
             
             for k, v in raw_params.items():
@@ -133,20 +127,16 @@ if __name__ == "__main__":
                 for suffix in suffixes_to_strip:
                     if k.endswith(suffix):
                         matched_suffix = suffix
-                        # Only apply the parameter if it's for the current model, 
-                        # or if it's DRNet borrowing a VCNet parameter.
                         if suffix == f"_{model_type.lower()}" or (model_type == 'DRNet' and suffix == '_vcnet'):
                             tune_params[k.replace(suffix, "")] = v
                         break
                 
-                # If it doesn't have any known suffix, just add it directly
                 if matched_suffix is None and k not in tune_params:
                     tune_params[k] = v
     else:
         print(f"No tuned hyperparameters found at {best_hparams_file}, using defaults.")
 
     def build_model():
-        # Called once per replicate so no weights carry over between datasets
         if model_type == 'Base':
             model = Base()
         elif model_type == 'LDML':
@@ -157,7 +147,6 @@ if __name__ == "__main__":
             model = LRL()
         elif model_type == 'VCNet':
             from baselines.vcnet.baseline_vcnet import VCNetWrapper
-            # Dim = 25 for IHDP, 100 for Synt
             dim_x = 25 if dataset_type == 'ihdp' else 100
             model = VCNetWrapper(num_features=dim_x, model_name='Vcnet_tr', **tune_params)
         elif model_type == 'DRNet':
@@ -195,6 +184,7 @@ if __name__ == "__main__":
     all_p_out = []
 
     for i in range(10):
+        utils.set_seed(i)
         data_name = f'./data/ihdp_semi_{i}.pkl' if dataset_type == 'ihdp' else f'./data/cont_synthetic_{i}.pkl'
 
         with open(data_name, 'rb') as file:

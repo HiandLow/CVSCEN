@@ -5,11 +5,11 @@ import pickle
 import utils
 import os
 
-# === IHDP Methods ===
-def get_effect_ihdp(X, t, coefs=None, alpha=5.0, factor1=1.5, factor2=0.5):
+def get_effect_ihdp(X, t, coefs=None, alpha=5.0, factor1=1.5, factor2=0.5, X_ref=None):
     X = np.atleast_2d(X)
     cate_idx1 = [3, 6, 7, 8, 9, 10, 11, 12, 13, 14]
-    cate_mean1 = np.mean(X[:, cate_idx1], axis=1).mean()
+    ref = X if X_ref is None else np.atleast_2d(X_ref)
+    cate_mean1 = np.mean(ref[:, cate_idx1], axis=1).mean()
     x1, x2, x3, x4, x5 = X[:, 0], X[:, 1], X[:, 2], X[:, 4], X[:, 5]
 
     y = (1. / (1.2 - t)
@@ -56,7 +56,6 @@ def generate_ihdp_data(X, seed=42, noise_std=0.5):
     }
     return dataset
 
-# === Synthetic Methods ===
 def get_effect_synt(X, a, coefs):
     base_Y = np.dot(X, coefs[1])
     coef = 4
@@ -89,7 +88,13 @@ def generate_synthetic_data(X, coefs, seed=42, noise_std=0.1):
     }
     return dataset
 
-# === Common Methods ===
+def true_curves(X, treat_grid, dataset_type, coefs, X_ref=None):
+    X = np.asarray(X, dtype=np.float64)
+    if dataset_type == 'ihdp':
+        return np.column_stack([get_effect_ihdp(X, t, X_ref=X_ref) for t in treat_grid])
+    out_coef = np.asarray(coefs[1], dtype=np.float64).reshape(-1)
+    return np.column_stack([get_effect_synt(X, t, (None, out_coef)) for t in treat_grid])
+
 def normalize(X_raw):
     x_min = X_raw.min(axis=0)
     x_max = X_raw.max(axis=0)

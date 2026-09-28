@@ -6,7 +6,6 @@ from torch.utils.data import Dataset, DataLoader
 import copy
 from tqdm import trange
 
-# Add the cloned repository to sys.path to resolve internal imports
 sys.path.insert(0, os.path.dirname(__file__))
 
 from models.acfr import acfr
@@ -39,7 +38,6 @@ class ACFRWrapper:
             'lr2': kwargs.get('lr_s', 0.05),
             'gamma1': kwargs.get('gamma1', 1),
             'gamma2': kwargs.get('gamma2', 0.2),
-            # Number of noisy latent copies per sample in forward_G (not a layer width)
             'm': kwargs.get('m', 10),
             'std': kwargs.get('std', 0.2),
             'batch_size': kwargs.get('batch_size', 64),
@@ -51,7 +49,6 @@ class ACFRWrapper:
         }
 
     def fit(self, X, T, Y):
-        # We will split a small validation set internally for early stopping / best model selection
         val_size = int(0.1 * len(X))
         indices = torch.randperm(len(X))
         val_indices = indices[:val_size]
@@ -78,20 +75,17 @@ class ACFRWrapper:
                 t_batch = t_batch.to(self.device)
                 y_batch = y_batch.to(self.device)
 
-                # ACFR specific training loop
                 t_hat = self.model.forward_D(x_batch)
                 l_t, err = self.model.backward_D(t_batch, t_hat)
                 
                 y_hat1, t_hat, y_hat2 = self.model.forward_G(x_batch, t_batch, err)
                 l = self.model.backward_G(t_batch, y_batch, t_hat, y_hat1, y_hat2, err)
 
-            # Validation
             val_loss = self._val(val_loader)
             if val_loss < best_val and epoch > n_epoch / 2:
                 best_model_state = copy.deepcopy(self.model.state_dict())
                 best_val = val_loss
 
-        # Load best model
         if best_model_state is not None:
             self.model.load_state_dict(best_model_state)
 
@@ -112,7 +106,6 @@ class ACFRWrapper:
     def predict(self, X, T):
         self.model.eval()
         
-        # If T is a scalar, broadcast it
         import numpy as np
         if np.isscalar(T):
             T = np.full(X.shape[0], T)

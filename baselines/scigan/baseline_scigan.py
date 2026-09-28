@@ -31,6 +31,7 @@ class SCIGANWrapper:
         import numpy as np
         
         tf.compat.v1.reset_default_graph()
+        tf.compat.v1.set_random_seed(int(np.random.randint(2**31 - 1)))
         
         dim = self.hparams.get('dim_layer', 128)
         params = {
@@ -47,16 +48,11 @@ class SCIGANWrapper:
             'd_steps': self.hparams.get('d_steps', 1)
         }
         
-        epochs = self.hparams.get('epoch_total', 400)
-        n_samples = X.shape[0]
-        batch_size = params['batch_size']
-        batches_per_epoch = max(1, n_samples / batch_size)
-        params['iterations_gan'] = int(epochs * batches_per_epoch)
-        params['iterations_inf'] = int(epochs * batches_per_epoch * 2)
+        params['iterations_gan'] = self.hparams.get('iterations_gan', 5000)
+        params['iterations_inf'] = self.hparams.get('iterations_inf', 10000)
         
         self.model = self.SCIGAN_Model_Class(params)
         
-        # In SCIGAN, T is treatment categorical index (0) and D is continuous dosage
         Train_T = np.zeros(X.shape[0], dtype=int)
         Train_D = T
         self.model.train(Train_X=X, Train_T=Train_T, Train_D=Train_D, Train_Y=Y, verbose=False)
@@ -71,11 +67,8 @@ class SCIGANWrapper:
         if np.isscalar(T):
             T = np.full(n, T)
             
-        # To predict for dosage T, we create treatment_dosage_samples
-        # where we put T at a specific index
         num_dosage_samples = self.hparams.get('num_dosage_samples', 5)
         treatment_dosage_samples = np.zeros([n, 1, num_dosage_samples])
-        # put the target T in the 0-th index of dosage samples
         for i in range(n):
             treatment_dosage_samples[i, 0, 0] = T[i]
             
@@ -86,6 +79,5 @@ class SCIGANWrapper:
                 self.model.Treatment_Dosage_Samples: treatment_dosage_samples
             }
         )
-        # I_logits shape: (batch_size, num_treatments, num_dosage_samples)
         pred = I_logits[:, 0, 0]
         return pred

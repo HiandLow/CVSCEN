@@ -5,43 +5,30 @@ parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
+import contextlib
+import traceback
 import optuna
 import numpy as np
 import pickle
 import argparse
 import json
-from scipy.integrate import romb
 import data
+import utils
 
 def evaluate_val_loss(model, X_val, T_val, Y_val):
-    # Depending on the model, calculate factual MSE
     preds = model.predict(X_val, T_val)
-    val_loss = np.mean((preds - Y_val) ** 2)
-    return val_loss
+    return np.mean((preds - Y_val) ** 2)
 
 def evaluate_val_mise(model, data_dict, dataset_type, X_val, adrf_only=False):
-    # Calculate Oracle MISE for validation
     grid_size = 2 ** 6 + 1
     t_min, t_max = np.percentile(data_dict['a'], 5), np.percentile(data_dict['a'], 95)
     dx = (t_max - t_min) / (grid_size - 1)
     treat_grid = np.linspace(t_min, t_max, grid_size)
     coefs = (data_dict["treat_coef"], data_dict["out_coef"])
 
-    pred_list = [model.predict(X_val, treat) for treat in treat_grid]
-    pred_grid = np.column_stack(pred_list)
-
-    if dataset_type == 'ihdp':
-        fact_list = [data.get_effect_ihdp(X_val, treat, coefs) for treat in treat_grid]
-    else:
-        fact_list = [data.get_effect_synt(X_val, treat, coefs) for treat in treat_grid]
-    
-    fact_grid = np.column_stack(fact_list)
-    if adrf_only:
-        # Population-level estimators (DDMLCT) are scored on the ADRF, not per-unit curves
-        return np.sqrt(romb((fact_grid.mean(axis=0) - pred_grid.mean(axis=0)) ** 2, dx=dx))
-    diff_sq = (fact_grid - pred_grid) ** 2
-    mise = np.mean([romb(diff_sq[idx], dx=dx) for idx in range(X_val.shape[0])])
-    return np.sqrt(mise)
+    pred_grid = np.column_stack([model.predict(X_val, treat) for treat in treat_grid])
+    fact_grid = data.true_curves(X_val, treat_grid, dataset_type, coefs, X_ref=data_dict['x'])
+    return utils.curve_error(pred_grid, fact_grid, dx, adrf_only=adrf_only)
 
 def objective(trial, model_type, dataset_type, data_splits, metric='val_loss'):
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -56,24 +43,23 @@ def objective(trial, model_type, dataset_type, data_splits, metric='val_loss'):
     model_type_lower = model_type.lower()
     kwargs = {}
     
-    # Conditional Common search space for non-DDMLCT
     if model_type_lower not in ['ddmlct', 'scigan']:
-        # DRNet's original learning rate (0.05) is included in its own grid
-        lr_choices = [1e-4, 5e-4, 1e-3, 5e-3, 1e-2] + ([5e-2] if model_type_lower == 'drnet' else [])
+        lr_choices = [1e-4, 5e-4, 1e-3, 5e-3, 1e-2]
+        if model_type_lower in ['vcnet', 'drnet']:
+            lr_choices = lr_choices + [5e-2]
+        elif model_type_lower == 'acfr':
+            lr_choices = [1e-5, 1e-4, 1e-3, 5e-3]
         kwargs['lr'] = trial.suggest_categorical("lr" if model_type_lower != 'drnet' else "lr_drnet", lr_choices)
         kwargs['weight_decay'] = trial.suggest_categorical("weight_decay", [1e-4, 1e-3, 5e-3, 1e-2])
 
-    # 1. Base ranges for common parameters
     batch_choices = [32, 64, 128]
     dim_choices = [32, 64, 128, 256]
     epoch_choices = [300, 400, 500]
     
-    # Names for backward compatibility with existing Optuna DBs
     epoch_name = "epoch_total"
     dim_name = "dim_layer"
     batch_name = "batch_size"
 
-    # 2. Override ranges for specific models
     if model_type_lower == 'scigan':
         batch_choices = [16, 32, 64, 128, 256]
         batch_name = "batch_size_scigan"
@@ -86,26 +72,27 @@ def objective(trial, model_type, dataset_type, data_splits, metric='val_loss'):
         epoch_choices = [300, 500, 700, 800]
         epoch_name = f"epoch_total_{model_type_lower}"
     elif model_type_lower == 'giks':
-        epoch_choices = [200, 300, 400, 500]
+        epoch_choices = [400, 600, 800]
     elif model_type_lower == 'ddmlct':
         dim_choices = [10, 25, 64, 100, 128]
         dim_name = "dim_layer_ddmlct"
+        epoch_choices = [100, 200, 300]
         
-    # 3. Suggest common parameters exactly once
     if model_type_lower != 'ddmlct':
         kwargs['batch_size'] = trial.suggest_categorical(batch_name, batch_choices)
-    kwargs['epoch_total'] = trial.suggest_categorical(epoch_name, epoch_choices)
+    if model_type_lower != 'scigan':
+        kwargs['epoch_total'] = trial.suggest_categorical(epoch_name, epoch_choices)
     kwargs['dim_layer'] = trial.suggest_categorical(dim_name, dim_choices)
     
-    # Pre-suggest DDMLCT unique parameters if needed so they are registered for the trial
     if model_type_lower == 'ddmlct':
         kwargs['lr_s'] = trial.suggest_categorical("lr_s", [0.001, 0.01, 0.05, 0.15, 0.4])
         kwargs['L'] = trial.suggest_categorical("L", [2, 5, 10])
         kwargs['lr'] = trial.suggest_categorical("lr_ddmlct", [1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 0.15, 0.4])
         kwargs['weight_decay'] = trial.suggest_categorical("weight_decay_ddmlct", [1e-4, 1e-3, 5e-3, 1e-2, 0.1, 0.2, 0.3])
+        kwargs['weight_decay_s'] = trial.suggest_categorical("weight_decay_s", [1e-4, 1e-3, 5e-3, 1e-2, 0.1, 0.2, 0.3])
     elif model_type_lower == 'acfr':
         kwargs['lr_s'] = trial.suggest_categorical("lr_s", [1e-5, 1e-4, 1e-3])
-        kwargs['gamma1'] = trial.suggest_categorical("gamma1", [0.1, 1.0, 5.0, 10.0])
+        kwargs['gamma1'] = trial.suggest_categorical("gamma1", [0.01, 0.1, 1.0, 5.0, 10.0])
         kwargs['gamma2'] = trial.suggest_categorical("gamma2", [0.1, 0.2, 0.5])
         kwargs['std'] = trial.suggest_categorical("std", [0.1, 0.2, 0.5])
         kwargs['m'] = trial.suggest_categorical("m", [1, 5, 10, 20])
@@ -124,58 +111,55 @@ def objective(trial, model_type, dataset_type, data_splits, metric='val_loss'):
     elif model_type_lower == 'csb':
         kwargs['beta'] = trial.suggest_categorical("beta_csb", [0.001, 0.01, 0.1, 1.0])
         kwargs['gamma'] = trial.suggest_categorical("gamma_csb", [0.001, 0.01, 0.1, 1.0])
-        kwargs['kappa'] = trial.suggest_categorical("kappa", [0.0, 0.5, 1.0])
-        kwargs['z_dim'] = trial.suggest_categorical("z_dim", [16, 32, 64])
+        kwargs['kappa'] = trial.suggest_categorical("kappa", [0.0, 0.05, 0.5, 1.0])
+        kwargs['z_dim'] = trial.suggest_categorical("z_dim", [16, 32, 64, 128])
         kwargs['t_dim_latent'] = trial.suggest_categorical("t_dim_latent", [4, 8, 16])
     elif model_type_lower in ['vcnet', 'drnet']:
         kwargs['alpha'] = trial.suggest_categorical("alpha", [0.1, 0.5, 1.0, 2.0])
-        kwargs['num_grid'] = trial.suggest_categorical("num_grid", [5, 10, 20])
-        kwargs['degree'] = trial.suggest_categorical("degree", [2, 3])
+        kwargs['tr_knots'] = trial.suggest_categorical("tr_knots", [5, 10, 20])
+        if model_type_lower == 'vcnet':
+            kwargs['degree'] = trial.suggest_categorical("degree", [2, 3])
         kwargs['tr_lr'] = trial.suggest_categorical("tr_lr", [1e-4, 1e-3, 1e-2])
     
     val_scores = []
-    
-    sys.stdout = open(os.devnull, 'w')
+
     try:
-        for X_train, T_train, Y_train, X_val, T_val, Y_val, loaded_data in data_splits:
-            # Re-initialize wrapper per dataset to reset weights
-            if model_type_lower in ['vcnet', 'drnet']:
-                from baselines.vcnet.baseline_vcnet import VCNetWrapper
-                model_name = 'Vcnet_tr' if model_type_lower == 'vcnet' else 'Drnet_tr'
-                model = VCNetWrapper(num_features=dim_x, model_name=model_name, **kwargs)
-            elif model_type_lower == 'acfr':
-                from baselines.acfr.baseline_acfr import ACFRWrapper
-                model = ACFRWrapper(num_features=dim_x, **kwargs)
-            elif model_type_lower == 'scigan':
-                from baselines.scigan.baseline_scigan import SCIGANWrapper
-                model = SCIGANWrapper(num_features=dim_x, **kwargs)
-            elif model_type_lower == 'giks':
-                from baselines.giks.baseline_giks import GIKSWrapper
-                model = GIKSWrapper(num_features=dim_x, **kwargs)
-            elif model_type_lower == 'csb':
-                from baselines.csb.baseline_csb import CSBWrapper
-                model = CSBWrapper(num_features=dim_x, **kwargs)
-            elif model_type_lower == 'ddmlct':
-                from baselines.ddmlct.baseline_ddmlct import DDMLCTWrapper
-                model = DDMLCTWrapper(num_features=dim_x, **kwargs)
-            else:
-                raise ValueError(f"Unknown model type: {model_type}")
-                
-            model.fit(X_train, T_train, Y_train)
-            if metric == 'val_mise':
-                score = evaluate_val_mise(model, loaded_data, dataset_type, X_val, adrf_only=(model_type_lower == 'ddmlct'))
-            else:
-                score = evaluate_val_loss(model, X_val, T_val, Y_val)
-            val_scores.append(score)
-            
+        with open(os.devnull, 'w') as devnull, contextlib.redirect_stdout(devnull):
+            for X_train, T_train, Y_train, X_val, T_val, Y_val, loaded_data in data_splits:
+                if model_type_lower in ['vcnet', 'drnet']:
+                    from baselines.vcnet.baseline_vcnet import VCNetWrapper
+                    model_name = 'Vcnet_tr' if model_type_lower == 'vcnet' else 'Drnet_tr'
+                    model = VCNetWrapper(num_features=dim_x, model_name=model_name, **kwargs)
+                elif model_type_lower == 'acfr':
+                    from baselines.acfr.baseline_acfr import ACFRWrapper
+                    model = ACFRWrapper(num_features=dim_x, **kwargs)
+                elif model_type_lower == 'scigan':
+                    from baselines.scigan.baseline_scigan import SCIGANWrapper
+                    model = SCIGANWrapper(num_features=dim_x, **kwargs)
+                elif model_type_lower == 'giks':
+                    from baselines.giks.baseline_giks import GIKSWrapper
+                    model = GIKSWrapper(num_features=dim_x, **kwargs)
+                elif model_type_lower == 'csb':
+                    from baselines.csb.baseline_csb import CSBWrapper
+                    model = CSBWrapper(num_features=dim_x, **kwargs)
+                elif model_type_lower == 'ddmlct':
+                    from baselines.ddmlct.baseline_ddmlct import DDMLCTWrapper
+                    model = DDMLCTWrapper(num_features=dim_x, **kwargs)
+                else:
+                    raise ValueError(f"Unknown model type: {model_type}")
+
+                model.fit(X_train, T_train, Y_train)
+                if metric == 'val_mise':
+                    score = evaluate_val_mise(model, loaded_data, dataset_type, X_val, adrf_only=(model_type_lower == 'ddmlct'))
+                else:
+                    score = evaluate_val_loss(model, X_val, T_val, Y_val)
+                val_scores.append(score)
+
         avg_val_score = np.mean(val_scores)
-    except Exception as e:
-        import traceback
+    except Exception:
         print(f"[{model_type}] trial failed, scoring 1e6:\n{traceback.format_exc()}", file=sys.stderr)
-        avg_val_score = 1e6 # Penalize failed runs
-    finally:
-        sys.stdout = sys.__stdout__
-        
+        avg_val_score = 1e6
+
     return avg_val_score
 
 def main():
@@ -292,7 +276,6 @@ def main():
             
             top_k = min(3, len(unique_trials))
             
-            # If multi is on, the top trial is already robustly evaluated. Just save it directly.
             if args.multi:
                 print(f"\n--- True Best Trial for {model_type} (from multi-mode) ---")
                 best_trial = unique_trials[0]
@@ -308,7 +291,6 @@ def main():
                 for i, trial in enumerate(unique_trials[:top_k]):
                     print(f"\nRe-evaluating Trial {trial.number} (Valid Score on split 0: {trial.value:.4f})")
                     
-                    # Cross-Dataset Robustness Check on splits 1, 2, 3
                     data_splits_reval = []
                     for ds_idx in [1, 2, 3]:
                         import random
