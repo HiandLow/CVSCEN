@@ -86,6 +86,8 @@ if __name__ == "__main__":
                 tune_params["coef_loss_c"] = tune_params.pop("coef_loss_u")
             if "coef_loss_v" in tune_params:
                 tune_params["coef_loss_p"] = tune_params.pop("coef_loss_v")
+            if "coef_loss" in tune_params:
+                tune_params["coef_loss_c"] = tune_params["coef_loss_p"] = tune_params.pop("coef_loss")
     elif args.hparams:
         raise FileNotFoundError(args.hparams)
     else:
@@ -100,7 +102,7 @@ if __name__ == "__main__":
     if tuned_selector is not None and selector != tuned_selector:
         print(f"Note: {best_hparams_file} was tuned for selector '{tuned_selector}'; "
               f"'{selector}'-specific settings fall back to the defaults in evaluate_model.")
-    print(f"Selector: {selector}" + (f", guidance: {tune_params.get('guidance', 'penalty')}" if selector == 'role' else ""))
+    print(f"Selector: {selector}" + (f", guidance: {tune_params.get('guidance', 'logit')}" if selector == 'role' else ""))
     run_tag = "" if selector == 'role' else f"_{selector}"
 
     mise_tr_list = []
@@ -180,6 +182,8 @@ TPR1: {:.4f} ± {:.4f}, TPR2: {:.4f} ± {:.4f} TPR3: {:.4f} ± {:.4f}".format(
         avg_fdr1_te, std_fdr1_te, avg_fdr2_te, std_fdr2_te, avg_fdr3_te, std_fdr3_te, 
         avg_tpr1_te, std_tpr1_te, avg_tpr2_te, std_tpr2_te, avg_tpr3_te, std_tpr3_te))
     
-    utils.plot_curve(data['x'].shape[1], c_c_te_list, c_p_te_list, str(np.sum(c_c_te_list)), str(np.sum(c_p_te_list)), "Each" + run_tag)
-    utils.plot_curve(data['x'].shape[1], c_cp_te_list, np.zeros_like(c_cp_te_list), str(np.sum(c_cp_te_list)), "0", "Union" + run_tag)
+    utils.plot_curve(data['x'].shape[1], c_c_te_list, c_p_te_list, str(np.sum(c_c_te_list)), str(np.sum(c_p_te_list)), "Each" + run_tag,
+                     treat_coef=data["treat_coef"], out_coef=data["out_coef"])
+    utils.plot_curve(data['x'].shape[1], c_cp_te_list, np.zeros_like(c_cp_te_list), str(np.sum(c_cp_te_list)), "0", "Union" + run_tag,
+                     treat_coef=data["treat_coef"], out_coef=data["out_coef"])
     utils.plot_drf(t_axis_te, avg_fact_te, avg_pred_te, f"cvscen_{dataset_type}{run_tag}")

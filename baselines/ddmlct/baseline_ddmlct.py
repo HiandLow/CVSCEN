@@ -46,9 +46,14 @@ class DDMLCTWrapper:
         wd = self.hparams.get('weight_decay', 0.01)
         wd_s = self.hparams.get('weight_decay_s', wd)
 
+        class FlooredDDMLCT(self.est.NN_DDMLCT):
+            def ipw(inner, Xf, g, I, I_C):
+                gps = super().ipw(Xf, g, I, I_C)
+                return np.maximum(gps, len(I_C) ** -0.5)
+
         def nets():
-            return (self.mods.NeuralNet1k_emp_app(k=self.num_features, dim_layer=dim_layer, lr=lr1, momentum=0.9, epochs=epochs, weight_decay=wd),
-                    self.mods.NeuralNet2_emp_app(k=self.num_features, dim_layer=dim_layer, lr=lr2, momentum=0.9, epochs=epochs, weight_decay=wd_s))
+            return (self.mods.NeuralNet1k_emp_app(k=self.num_features, dim_layer=dim_layer, lr=lr1, momentum=self.hparams.get("momentum", 0.9), epochs=epochs, weight_decay=wd),
+                    self.mods.NeuralNet2_emp_app(k=self.num_features, dim_layer=dim_layer, lr=lr2, momentum=self.hparams.get("momentum_s", 0.9), epochs=epochs, weight_decay=wd_s))
 
         grid_size = 2**6 + 1
         t_min, t_max = np.percentile(T, 5), np.percentile(T, 95)
@@ -58,17 +63,17 @@ class DDMLCTWrapper:
         h = np.std(T) * 3 * (len(Y)**(-0.2))
         u = 0.5
 
-        model1 = self.est.NN_DDMLCT(*nets())
+        model1 = FlooredDDMLCT(*nets())
         model1.fit(X_df, T_series, Y_series, self.t_list, L=L, h=h, basis=False, standardize=True)
 
-        model2 = self.est.NN_DDMLCT(*nets())
+        model2 = FlooredDDMLCT(*nets())
         model2.fit(X_df, T_series, Y_series, self.t_list, L=L, h=h*u, basis=False, standardize=True)
 
         Bt = (model1.beta - model2.beta) / ((model1.h**2) * (1 - (u**2)))
         h_star = np.mean(((model2.Vt / (4 * (Bt**2) + 1e-8))**0.2) * (model1.n**-0.2))
         h_final = 0.8 * h_star
 
-        self.model = self.est.NN_DDMLCT(*nets())
+        self.model = FlooredDDMLCT(*nets())
         self.model.fit(X_df, T_series, Y_series, self.t_list, L=L, h=h_final, basis=False, standardize=True)
 
         self.beta = np.asarray(self.model.beta, dtype=np.float64)

@@ -5,7 +5,7 @@ import numpy as np
 class VCNetWrapper:
     def __init__(self, num_features, model_name='Vcnet_tr', n_epochs=500, **kwargs):
         import torch
-        self.device = torch.device("cpu")
+        self.device = torch.device(kwargs.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
         self.model_name = model_name
         self.n_epochs = n_epochs
         
@@ -87,6 +87,7 @@ class VCNetWrapper:
                     trg = self.TargetReg(t)
                     loss = criterion(out, y, alpha=alpha) + criterion_TR(out, trg, y, beta=beta)
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                     optimizer.step()
                     
                     tr_optimizer.zero_grad()
@@ -94,12 +95,14 @@ class VCNetWrapper:
                     trg = self.TargetReg(t)
                     tr_loss = criterion_TR(out, trg, y, beta=beta)
                     tr_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.TargetReg.parameters(), 1.0)
                     tr_optimizer.step()
                 else:
                     optimizer.zero_grad()
                     out = self.model(t, x)
                     loss = criterion(out, y, alpha=alpha)
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
                     optimizer.step()
 
     def predict(self, X, T):

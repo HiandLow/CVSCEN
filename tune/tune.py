@@ -17,7 +17,7 @@ if parent_dir not in sys.path:
 import model
 import utils
 
-def objective(trial, dataset_type, data_splits, metric, guidance='penalty', selector='role'):
+def objective(trial, dataset_type, data_splits, metric, guidance='logit', selector='role'):
     trial.set_user_attr("mode", "multi" if len(data_splits) > 1 else "single")
     hparams = {
         "selector": selector,
@@ -40,15 +40,16 @@ def objective(trial, dataset_type, data_splits, metric, guidance='penalty', sele
             guidance = trial.suggest_categorical("guidance", ["penalty", "logit"])
         hparams.update({
             "guidance": guidance,
-            "weight_hsic": trial.suggest_categorical("weight_hsic", [0.5, 1.0, 2.5, 5.0, 10.0]),
-            "coef_loss_c": trial.suggest_categorical("coef_loss_c", [0.01, 0.05, 0.1, 0.25]),
-            "coef_loss_p": trial.suggest_categorical("coef_loss_p", [0.01, 0.05, 0.1, 0.25, 0.5]),
-            "weight_corr": trial.suggest_categorical("weight_corr", [0.5, 1.0, 2.0, 5.0, 10.0]),
-            "init_logit": trial.suggest_categorical("init_logit", [0.1, 1.0, 2.0]),
+            "weight_hsic": trial.suggest_categorical("weight_hsic", [0.5, 1.0, 2.5, 5.0]),
+            "coef_loss_c": trial.suggest_categorical("coef_loss", [0.05, 0.1, 0.25, 0.5]),
+            "weight_corr": trial.suggest_categorical("weight_corr", [0.5, 1.0, 2.5, 5.0]),
+            "init_logit": trial.suggest_categorical("init_logit", [0.0, 0.5, 1.0]),
         })
+        hparams["coef_loss_p"] = hparams["coef_loss_c"]
 
     metrics_list = []
-    for set_train, set_val, set_test, coefs, info, t_range, x_ref in data_splits:
+    for k, (set_train, set_val, set_test, coefs, info, t_range, x_ref) in enumerate(data_splits):
+        utils.set_seed(k)
         loader_train = DataLoader(set_train, batch_size=hparams["batch_size"], shuffle=True)
         loader_val = DataLoader(set_val, batch_size=hparams["batch_size"], shuffle=False)
         model_main, optimizer_s, optimizer_p, scheduler_s, scheduler_p, coef_loss_list = model.build(info, hparams)
@@ -72,7 +73,7 @@ if __name__ == "__main__":
     parser.add_argument('--metric', type=str, default='val_loss', choices=['val_loss', 'val_mise'], help='Metric to minimize during validation')
     parser.add_argument('--trials', type=int, default=20)
     parser.add_argument('--multi', action='store_true', help='Evaluate on 3 datasets directly inside Optuna objective')
-    parser.add_argument('--guidance', type=str, default='penalty', choices=['penalty', 'logit', 'search'],
+    parser.add_argument('--guidance', type=str, default='logit', choices=['penalty', 'logit', 'search'],
                         help="Dependence guidance: sparsity penalty, logit shift, or tuned as a hyperparameter")
     parser.add_argument('--selector', type=str, default='role', choices=['role', 'two_gate'],
                         help="role: 3-way role selector with HSIC guidance; two_gate: treatment and outcome gates")
@@ -120,7 +121,8 @@ if __name__ == "__main__":
     study_name = f"cvscen_{args.dataset}_{args.metric}{tag}_study"
     db_path = os.path.join(current_dir, f"optuna_study_CVSCEN_{args.dataset}_{args.metric}{tag}.db")
     storage_name = f"sqlite:///{db_path}"
-    study = optuna.create_study(study_name=study_name, storage=storage_name, direction="minimize", load_if_exists=True)
+    study = optuna.create_study(study_name=study_name, storage=storage_name, direction="minimize", load_if_exists=True,
+                                sampler=optuna.samplers.TPESampler(seed=42))
 
     existing_hparams_path = os.path.join(current_dir, f'best_hparams_CVSCEN_{args.dataset}_{args.metric}{tag}.json')
     if os.path.exists(existing_hparams_path):

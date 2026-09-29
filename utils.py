@@ -26,8 +26,12 @@ def split_data(data, train_size=0.63, val_size=0.27, seed=42):
         make_dataset(indices[val_end:]), make_dataset(None, is_data = False)
 
 def HSIC(x, a):
-    x, a = torch.tensor(x).unsqueeze(1), torch.tensor(a) 
-    hsic = ignite.metrics.HSIC()
+    # median heuristic over distinct pairs: ignite's per-batch median is 0 for binary/discrete x (-> NaN)
+    d = np.subtract.outer(x, x).astype(np.float64) ** 2
+    d = d[d > 0]
+    sigma_x = float(np.sqrt(np.median(d))) if d.size else -1
+    x, a = torch.tensor(x).unsqueeze(1), torch.tensor(a)
+    hsic = ignite.metrics.HSIC(sigma_x=sigma_x)
     batch_size=256
 
     for idx in range(0, x.size(0), batch_size):
@@ -73,63 +77,43 @@ def TPR(select, coef_a, coef_y, is_confounder):
 
     return tpr.item()    
 
-def plot_curve(axis, a, b, string_a, string_b, file_name, bin_size=100):
-    true_a = list(a[:15])
-    true_b = list(b[:15])
-    x_labels = []
-    for i in range(15):
-        if axis == 25:
-            if i in [0, 1, 2, 4, 5]:
-                label = f"{i+1}\n(C)"
-            elif i in [3, 6, 7, 8, 9, 10, 11, 12, 13, 14]:
-                label = f"{i+1}\n(P)"
-            else:
-                label = f"{i+1}"
-        elif axis == 100:
-            if i in [0, 1, 2, 3, 4]:
-                label = f"{i+1}\n(C)"
-            elif i in [5, 6, 7, 8, 9]:
-                label = f"{i+1}\n(P)"
-            elif i in [10, 11, 12, 13, 14]:
-                label = f"{i+1}\n(I)"
-            else:
-                label = f"{i+1}"
-        else:
-            label = str(i+1)
-        x_labels.append(label)
-    
-    grouped_a = true_a.copy()
-    grouped_b = true_b.copy()
-    
-    if axis > 15:
-        noise_a = a[15:]
-        noise_b = b[15:]
-        
-        for i in range(0, len(noise_a), bin_size):
-            start_idx = 15 + i + 1
-            end_idx = min(15 + i + bin_size - 1, axis - 1) + 1
-            
-            x_labels.append(f"{start_idx}~\n{end_idx}")
-            
-            grouped_a.append(np.sum(noise_a[i:i+bin_size]) / 10.0)
-            grouped_b.append(np.sum(noise_b[i:i+bin_size]) / 10.0)
+def plot_curve(axis, a, b, string_a, string_b, file_name, treat_coef=None, out_coef=None, max_noise_bars=10):
+    a, b = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
+    if treat_coef is None or out_coef is None:
+        roles = [""] * axis
+    else:
+        ta = np.asarray(treat_coef).reshape(-1) != 0
+        oy = np.asarray(out_coef).reshape(-1) != 0
+        roles = ["C" if t and o else "P" if o else "I" if t else "N" for t, o in zip(ta, oy)]
+
+    noise_idx = [j for j in range(axis) if roles[j] == "N"]
+    group_noise = len(noise_idx) > max_noise_bars
+    shown = [j for j in range(axis) if not (group_noise and roles[j] == "N")]
+
+    x_labels = [f"{j+1}\n({roles[j]})" if roles[j] else str(j + 1) for j in shown]
+    grouped_a = [a[j] for j in shown]
+    grouped_b = [b[j] for j in shown]
+    if group_noise:
+        x_labels.append(f"N\n(avg of {len(noise_idx)})")
+        grouped_a.append(a[noise_idx].mean())
+        grouped_b.append(b[noise_idx].mean())
 
     x = np.arange(len(x_labels))
     width = 0.35
-    
+
     plt.figure(figsize=(20, 6))
-    
+
     plt.bar(x - width/2, grouped_a, width, label=string_a, color='#FF7675')
     plt.bar(x + width/2, grouped_b, width, label=string_b, color='#74B9FF')
-    
+
     plt.xticks(x, x_labels)
-    plt.tick_params(axis='x', rotation=45, labelsize=10) 
+    plt.tick_params(axis='x', rotation=45, labelsize=10)
     plt.xlim(-1, len(x_labels))
-    
-    if axis > 14:
-        plt.axvline(x=14.5, color='gray', linestyle='--', linewidth=2, alpha=0.7)
-        max_height = max(max(grouped_a), max(grouped_b))
-        plt.text(14.8, max_height * 0.9, 'Noise Features (Averaged)', color='gray', fontsize=12, fontweight='bold')
+
+    if group_noise:
+        plt.axvline(x=len(shown) - 0.5, color='gray', linestyle='--', linewidth=2, alpha=0.7)
+        max_height = max(max(grouped_a), max(grouped_b), 1e-8)
+        plt.text(len(shown) - 0.7, max_height * 0.9, 'Noise Features (Averaged) →', color='gray', fontsize=12, fontweight='bold', ha='right')
     
     plt.grid(axis='y', linestyle='--', alpha=0.5)
     plt.grid(axis='x', linestyle=':', alpha=0.3)

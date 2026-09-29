@@ -436,14 +436,14 @@ class Multi_head(nn.Module):
 
     def forward(self, x):
         # x = [treatment, features]
-        out = torch.zeros(x.shape[0], self.outdim)
+        out = torch.zeros(x.shape[0], self.outdim, device=x.device)
         t = x[:, 0]
 
-        idx1 = list(set(list(torch.where(t >= self.pt[0])[0].numpy())) & set(torch.where(t < self.pt[1])[0].numpy()))
-        idx2 = list(set(list(torch.where(t >= self.pt[1])[0].numpy())) & set(torch.where(t < self.pt[2])[0].numpy()))
-        idx3 = list(set(list(torch.where(t >= self.pt[2])[0].numpy())) & set(torch.where(t < self.pt[3])[0].numpy()))
-        idx4 = list(set(list(torch.where(t >= self.pt[3])[0].numpy())) & set(torch.where(t < self.pt[4])[0].numpy()))
-        idx5 = list(set(list(torch.where(t >= self.pt[4])[0].numpy())) & set(torch.where(t <= self.pt[5])[0].numpy()))
+        idx1 = list(set(list(torch.where(t >= self.pt[0])[0].cpu().numpy())) & set(torch.where(t < self.pt[1])[0].cpu().numpy()))
+        idx2 = list(set(list(torch.where(t >= self.pt[1])[0].cpu().numpy())) & set(torch.where(t < self.pt[2])[0].cpu().numpy()))
+        idx3 = list(set(list(torch.where(t >= self.pt[2])[0].cpu().numpy())) & set(torch.where(t < self.pt[3])[0].cpu().numpy()))
+        idx4 = list(set(list(torch.where(t >= self.pt[3])[0].cpu().numpy())) & set(torch.where(t < self.pt[4])[0].cpu().numpy()))
+        idx5 = list(set(list(torch.where(t >= self.pt[4])[0].cpu().numpy())) & set(torch.where(t <= self.pt[5])[0].cpu().numpy()))
 
         if idx1:
             out1 = self.Q1(x[idx1, :])

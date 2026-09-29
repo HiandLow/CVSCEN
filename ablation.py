@@ -16,6 +16,8 @@ def load_tuned(best_hparams_file):
                 tune_params["coef_loss_c"] = tune_params.pop("coef_loss_u")
             if "coef_loss_v" in tune_params:
                 tune_params["coef_loss_p"] = tune_params.pop("coef_loss_v")
+            if "coef_loss" in tune_params:
+                tune_params["coef_loss_c"] = tune_params["coef_loss_p"] = tune_params.pop("coef_loss")
     return tune_params
 
 def run_ablation(dataset_type, case_name, hparams_override, hparams_file=None):
@@ -83,7 +85,7 @@ if __name__ == "__main__":
             {"name": "Role Selector", "label": "Role sel.", "params": {"selector": "role"}, "hparams_file": tuned_file("role")},
         ]
     else:
-        other_guidance = "logit" if main_params.get("guidance", "penalty") == "penalty" else "penalty"
+        other_guidance = "logit" if main_params.get("guidance", "logit") == "penalty" else "penalty"
         cases += [
             {"name": "w/o HSIC Loss", "label": "w/o HSIC Loss", "params": {"weight_hsic": 0.0}},
             {"name": "w/o Correlation Prior", "label": "w/o Corr. Prior", "params": {"weight_corr": 0.0}},

@@ -45,7 +45,7 @@ class VSLayer(BaseModule):
         self.temp_end = 0.1
         self.logits = torch.nn.Parameter(torch.zeros((self.dim_x, 3), device=self.device))
         self.logits.data[:, 1] = getattr(self, 'init_logit', 1.0)
-        self.guidance = getattr(self, 'guidance', 'penalty')
+        self.guidance = getattr(self, 'guidance', 'logit')
         if self.guidance not in ('penalty', 'logit'):
             raise ValueError(f"Unknown guidance: {self.guidance}")
         hsic = self.HSIC_xa

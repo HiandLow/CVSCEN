@@ -45,8 +45,8 @@ def objective(trial, model_type, dataset_type, data_splits, metric='val_loss'):
     
     if model_type_lower not in ['ddmlct', 'scigan']:
         lr_choices = [1e-4, 5e-4, 1e-3, 5e-3, 1e-2]
-        if model_type_lower in ['vcnet', 'drnet']:
-            lr_choices = lr_choices + [5e-2]
+        if model_type_lower == 'vcnet':
+            lr_choices = [1e-4, 5e-4, 1e-3]
         elif model_type_lower == 'acfr':
             lr_choices = [1e-5, 1e-4, 1e-3, 5e-3]
         kwargs['lr'] = trial.suggest_categorical("lr" if model_type_lower != 'drnet' else "lr_drnet", lr_choices)
@@ -69,6 +69,7 @@ def objective(trial, model_type, dataset_type, data_splits, metric='val_loss'):
         dim_name = "dim_layer_csb"
         epoch_name = "epoch_total_csb"
     elif model_type_lower in ['vcnet', 'drnet']:
+        dim_choices = [32, 50, 64]
         epoch_choices = [300, 500, 700, 800]
         epoch_name = f"epoch_total_{model_type_lower}"
     elif model_type_lower == 'giks':
@@ -90,6 +91,8 @@ def objective(trial, model_type, dataset_type, data_splits, metric='val_loss'):
         kwargs['lr'] = trial.suggest_categorical("lr_ddmlct", [1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 0.15, 0.4])
         kwargs['weight_decay'] = trial.suggest_categorical("weight_decay_ddmlct", [1e-4, 1e-3, 5e-3, 1e-2, 0.1, 0.2, 0.3])
         kwargs['weight_decay_s'] = trial.suggest_categorical("weight_decay_s", [1e-4, 1e-3, 5e-3, 1e-2, 0.1, 0.2, 0.3])
+        kwargs['momentum'] = trial.suggest_categorical("momentum_ddmlct", [0.0, 0.9])
+        kwargs['momentum_s'] = trial.suggest_categorical("momentum_s", [0.0, 0.9])
     elif model_type_lower == 'acfr':
         kwargs['lr_s'] = trial.suggest_categorical("lr_s", [1e-5, 1e-4, 1e-3])
         kwargs['gamma1'] = trial.suggest_categorical("gamma1", [0.01, 0.1, 1.0, 5.0, 10.0])
@@ -119,13 +122,14 @@ def objective(trial, model_type, dataset_type, data_splits, metric='val_loss'):
         kwargs['tr_knots'] = trial.suggest_categorical("tr_knots", [5, 10, 20])
         if model_type_lower == 'vcnet':
             kwargs['degree'] = trial.suggest_categorical("degree", [2, 3])
-        kwargs['tr_lr'] = trial.suggest_categorical("tr_lr", [1e-4, 1e-3, 1e-2])
+        kwargs['tr_lr'] = trial.suggest_categorical("tr_lr", [1e-4, 1e-3])
     
     val_scores = []
 
     try:
         with open(os.devnull, 'w') as devnull, contextlib.redirect_stdout(devnull):
-            for X_train, T_train, Y_train, X_val, T_val, Y_val, loaded_data in data_splits:
+            for k, (X_train, T_train, Y_train, X_val, T_val, Y_val, loaded_data) in enumerate(data_splits):
+                utils.set_seed(k)
                 if model_type_lower in ['vcnet', 'drnet']:
                     from baselines.vcnet.baseline_vcnet import VCNetWrapper
                     model_name = 'Vcnet_tr' if model_type_lower == 'vcnet' else 'Drnet_tr'
@@ -156,6 +160,9 @@ def objective(trial, model_type, dataset_type, data_splits, metric='val_loss'):
                 val_scores.append(score)
 
         avg_val_score = np.mean(val_scores)
+        if not np.isfinite(avg_val_score):
+            print(f"[{model_type}] trial produced a non-finite score, scoring 1e6", file=sys.stderr)
+            avg_val_score = 1e6
     except Exception:
         print(f"[{model_type}] trial failed, scoring 1e6:\n{traceback.format_exc()}", file=sys.stderr)
         avg_val_score = 1e6
@@ -169,6 +176,8 @@ def main():
     parser.add_argument('--model', type=str, default='all')
     parser.add_argument('--metric', type=str, default='val_loss', choices=['val_loss', 'val_mise'])
     parser.add_argument('--multi', action='store_true', help='Evaluate on 3 datasets directly inside Optuna objective')
+    parser.add_argument('--worker', action='store_true',
+                        help='Extra parallel worker on the same study: runs trials only (no enqueue, no final selection)')
     args = parser.parse_args()
 
     models_to_tune = ['VCNet', 'DRNet', 'ACFR', 'SCIGAN', 'GIKS', 'CSB', 'DDMLCT']
@@ -226,15 +235,16 @@ def main():
             study_name=study_name, 
             storage=storage_url, 
             direction="minimize", 
-            load_if_exists=True
+            load_if_exists=True,
+            sampler=optuna.samplers.TPESampler(seed=42)
         )
 
         existing_hparams_path = os.path.join(current_dir, f'best_hparams_{model_type}_{args.dataset}_{args.metric}.json')
-        if os.path.exists(existing_hparams_path):
+        if os.path.exists(existing_hparams_path) and not args.worker and args.trials > 0:
             try:
                 with open(existing_hparams_path, 'r') as f:
                     old_best = json.load(f)
-                
+
                 if model_type.lower() == 'drnet' and 'epoch_total_vcnet' in old_best:
                     old_best['epoch_total_drnet'] = old_best.pop('epoch_total_vcnet')
                 
@@ -251,6 +261,9 @@ def main():
             )
         except KeyboardInterrupt:
             print("\nOptimization interrupted. Saving best parameters so far...")
+
+        if args.worker:
+            continue
 
         try:
             if args.multi:

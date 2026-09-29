@@ -55,7 +55,9 @@ class SCIGANWrapper:
         
         Train_T = np.zeros(X.shape[0], dtype=int)
         Train_D = T
-        self.model.train(Train_X=X, Train_T=Train_T, Train_D=Train_D, Train_Y=Y, verbose=False)
+        self.y_min, self.y_max = float(np.min(Y)), float(np.max(Y))
+        Y_norm = (Y - self.y_min) / (self.y_max - self.y_min + 1e-8)
+        self.model.train(Train_X=X, Train_T=Train_T, Train_D=Train_D, Train_Y=Y_norm, verbose=False)
         
     def predict(self, X, T):
         import os
@@ -80,4 +82,4 @@ class SCIGANWrapper:
             }
         )
         pred = I_logits[:, 0, 0]
-        return pred
+        return pred * (self.y_max - self.y_min + 1e-8) + self.y_min
