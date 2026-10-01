@@ -28,7 +28,7 @@ def evaluate_model(data, dataset_type='ihdp', tune=None):
 
     bs = hparams.get("batch_size", 64)
 
-    dataset = {k: data[k] for k in data.keys()}
+    dataset = {k: data[k] for k in data.keys() if k != '_idx'}
     set_train, set_val, set_test, coefs = utils.split_data(dataset, train_size=0.63, val_size=0.27)
     loader_train, loader_val, loader_test = [DataLoader(ds, batch_size=bs, shuffle=is_train)
         for ds, is_train in zip([set_train, set_val, set_test], [True, False, False])]
@@ -43,6 +43,7 @@ def evaluate_model(data, dataset_type='ihdp', tune=None):
     }
     if hparams["selector"] == "role":
         info["HSIC_xa"] = utils.train_hsic(set_train)
+        info["dep_z"] = utils.cached_dependence_z(set_train, f"{dataset_type}_{data['_idx']}")
 
     model_main, optimizer_s, optimizer_p, scheduler_s, scheduler_p, coef_loss = model.build(info, hparams)
     model_main, _, _ = model.train_model(model_main, optimizer_s, optimizer_p, scheduler_s, scheduler_p,
@@ -59,7 +60,7 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='ihdp', choices=['ihdp', 'synt'])
     parser.add_argument('--selector', type=str, default=None, choices=['role', 'two_gate'],
                         help="Override the selector; by default it comes from the tuned file (else 'role')")
-    parser.add_argument('--guidance', type=str, default=None, choices=['penalty', 'logit'],
+    parser.add_argument('--guidance', type=str, default=None, choices=['penalty', 'logit', 'calibrated'],
                         help="Override the guidance of the role selector")
     parser.add_argument('--hparams', type=str, default=None,
                         help="Tuned hyperparameter JSON to load (default: tune/best_hparams_CVSCEN_{dataset}[_two_gate].json)")
@@ -128,6 +129,7 @@ if __name__ == "__main__":
         data_name = f'./data/ihdp_semi_{i}.pkl' if dataset_type == 'ihdp' else f'./data/cont_synthetic_{i}.pkl'
         with open(data_name, 'rb') as file:
             data = pickle.load(file)
+        data['_idx'] = i
 
         mise_tr, adrfe_tr, mise_te, adrfe_te, fdr_te, tpr_te, c_te, drf_tr, drf_te = evaluate_model(data, dataset_type, tune_params)
         

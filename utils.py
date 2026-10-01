@@ -45,6 +45,39 @@ def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+def _median_gram(v):
+    d = (v[:, None] - v[None, :]) ** 2
+    nz = d[d > 1e-12]
+    s2 = nz.median() if nz.numel() else torch.tensor(1.0, dtype=v.dtype, device=v.device)
+    return torch.exp(-d / (2 * s2))
+
+def dependence_z(set_train, n_perm=300, seed=0):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    x = set_train.tensors[0].to(device, torch.float64)
+    a = set_train.tensors[1].to(device, torch.float64).view(-1)
+    n = a.shape[0]
+    h = torch.eye(n, device=device, dtype=torch.float64) - 1.0 / n
+    l = h @ _median_gram(a) @ h
+    gen = torch.Generator(device=device).manual_seed(seed)
+    perms = [torch.randperm(n, generator=gen, device=device) for _ in range(n_perm)]
+    z = []
+    for j in range(x.shape[1]):
+        k = _median_gram(x[:, j])
+        stat = (k * l).sum()
+        null = torch.stack([(k * l[p][:, p]).sum() for p in perms])
+        z.append(((stat - null.mean()) / (null.std() + 1e-12)).item())
+    return torch.tensor(z, dtype=torch.float32)
+
+def cached_dependence_z(set_train, key):
+    import os
+    os.makedirs('cache', exist_ok=True)
+    path = os.path.join('cache', f'z_{key}.pt')
+    if os.path.exists(path):
+        return torch.load(path)
+    z = dependence_z(set_train)
+    torch.save(z, path)
+    return z
+
 def train_hsic(set_train):
     x, a = set_train.tensors[0].numpy(), set_train.tensors[1].numpy().reshape(-1, 1)
     scores = [HSIC(x[:, j], a) for j in range(x.shape[1])]

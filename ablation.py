@@ -42,7 +42,8 @@ def run_ablation(dataset_type, case_name, hparams_override, hparams_file=None):
         data_name = f'./data/ihdp_semi_{i}.pkl' if dataset_type == 'ihdp' else f'./data/cont_synthetic_{i}.pkl'
         with open(data_name, 'rb') as file:
             data = pickle.load(file)
-            
+        data['_idx'] = i
+
         _, _, mise_te, adrfe_te, fdr_te, tpr_te, _, _, _ = execute.evaluate_model(data, dataset_type, tune_params)
         
         mise_te_list.append(mise_te)
@@ -83,6 +84,12 @@ if __name__ == "__main__":
         cases += [
             {"name": "w/o Treatment Head", "label": "w/o Treat. Head", "params": {"weight_treat": 0.0}},
             {"name": "Role Selector", "label": "Role sel.", "params": {"selector": "role"}, "hparams_file": tuned_file("role")},
+        ]
+    elif main_params.get("guidance") == "calibrated":
+        cases += [
+            {"name": "w/o Dependence Costs", "label": "w/o Dep. Costs", "params": {"weight_dep": 0.0}},
+            {"name": "w/o Sparsity", "label": "w/o Sparsity", "params": {"coef_loss_c": 0.0, "coef_loss_p": 0.0}},
+            {"name": "Logit Guidance", "label": "Logit guid.", "params": {"guidance": "logit"}, "hparams_file": tuned_file("logit")},
         ]
     else:
         other_guidance = "logit" if main_params.get("guidance", "logit") == "penalty" else "penalty"

@@ -7,3 +7,4 @@ paper/
 figures/
 .agents/
 *.md
+cache/

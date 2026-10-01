@@ -46,8 +46,19 @@ class VSLayer(BaseModule):
         self.logits = torch.nn.Parameter(torch.zeros((self.dim_x, 3), device=self.device))
         self.logits.data[:, 1] = getattr(self, 'init_logit', 1.0)
         self.guidance = getattr(self, 'guidance', 'logit')
-        if self.guidance not in ('penalty', 'logit'):
+        if self.guidance not in ('penalty', 'logit', 'calibrated'):
             raise ValueError(f"Unknown guidance: {self.guidance}")
+        if self.guidance == 'calibrated':
+            q = torch.distributions.Normal(0.0, 1.0).cdf(1.645 - self.dep_z.float()).to(self.device)
+            w = getattr(self, 'weight_dep', 10.0)
+            self.c_weight = 1.0 + w * q
+            self.p_weight = 1.0 + w * (1.0 - q)
+            self.c_shift = torch.zeros_like(q)
+            self.logits.data[:, 2] = self.logits.data[:, 1]
+            self.temp = self.temp_start
+            self.use_corr = True
+            self.epoch = -1
+            return
         hsic = self.HSIC_xa
         score = torch.clamp(torch.tanh((hsic - hsic.mean()) / (hsic.std() + 1e-8)), max=0.0).to(self.device)
         weight_corr = getattr(self, 'weight_corr', 0.0)
@@ -70,7 +81,7 @@ class VSLayer(BaseModule):
     def forward(self, epoch):
         if self.training and epoch > self.epoch:
             self.temp = self.temp_start * (self.temp_end / self.temp_start) ** (epoch / self.epoch_total)
-            self.use_corr = self.temp <= 1.0
+            self.use_corr = self.guidance == 'calibrated' or self.temp <= 1.0
             self.epoch = epoch
 
         logits = self.guided_logits()
@@ -242,6 +253,9 @@ class MainModel(BaseModule):
         return self.predict(x_c, x_p, a), x_c, x_p, m_c, m_p
 
     def aux_terms(self, x_p, a, m_c, m_p, coef_loss):
+        if not self.two_gate and self.vsl.guidance == 'calibrated':
+            reg = coef_loss[1] * (m_c * self.vsl.c_weight + m_p * self.vsl.p_weight).sum()
+            return torch.zeros((), device=x_p.device), reg
         if self.two_gate:
             aux = F.mse_loss(self.a_hat, a)
             reg = coef_loss[1] * self.vsl.m_y.mean() + coef_loss[2] * self.vsl.m_a.mean()
@@ -270,6 +284,8 @@ def build(info, hparams):
 
     if model_main.two_gate:
         coef_loss = [hparams["weight_treat"], hparams["coef_loss_y"], hparams["coef_loss_a"]]
+    elif hparams.get("guidance") == "calibrated":
+        coef_loss = [0.0, hparams.get("coef_loss", hparams.get("coef_loss_c")), 0.0]
     else:
         coef_loss = [hparams["weight_hsic"], hparams["coef_loss_c"], hparams["coef_loss_p"]]
     return model_main, optimizer_s, optimizer_p, scheduler_s, scheduler_p, coef_loss
